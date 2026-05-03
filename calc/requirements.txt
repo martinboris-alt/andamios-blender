@@ -1,0 +1,16 @@
+# Dependencias del módulo de cálculo estructural (calc/).
+#
+# Instalación con la Python bundled de Blender 5.x:
+#   /snap/blender/current/5.1/python/bin/python3.13 -m pip install --user -r calc/requirements.txt
+#
+# O en un venv del sistema (Ubuntu requiere python3-venv y python3-pip):
+#   sudo apt install python3-pip python3-venv
+#   python3 -m venv .venv && source .venv/bin/activate
+#   pip install -r calc/requirements.txt
+#
+# Tests:
+#   pytest calc/tests
+
+PyNiteFEA>=2.4
+pytest>=8.0
+numpy>=1.24

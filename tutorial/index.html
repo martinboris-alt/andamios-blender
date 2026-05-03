@@ -1,0 +1,2163 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Andamios — Tutorial v0.7.12</title>
+<style>
+:root {
+  --c-bg: #0b1020;
+  --c-surface: #ffffff;
+  --c-surface-2: #f5f7fb;
+  --c-text: #1c2233;
+  --c-text-soft: #475569;
+  --c-text-very-soft: #64748b;
+  --c-primary: #0a3055;
+  --c-primary-2: #2563eb;
+  --c-accent: #f59e0b;
+  --c-success: #059669;
+  --c-warning: #d97706;
+  --c-danger:  #dc2626;
+  --c-border: #e2e8f0;
+  --shadow: 0 4px 20px rgba(10, 48, 85, 0.08);
+  --shadow-lg: 0 16px 40px rgba(10, 48, 85, 0.18);
+  --radius: 12px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  color: var(--c-text);
+  background: var(--c-surface-2);
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+code, pre, kbd { font-family: ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, monospace; }
+
+/* ===== Skip link (accesibilidad) ===== */
+.skip-link {
+  position: absolute; left: -9999px; top: 0;
+  background: var(--c-primary); color: white;
+  padding: 0.6em 1em; z-index: 1000;
+  text-decoration: none; border-radius: 0 0 6px 0;
+}
+.skip-link:focus { left: 0; }
+
+/* ===== Focus rings visibles (WCAG) ===== */
+:focus-visible {
+  outline: 3px solid var(--c-primary-2);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+a { color: var(--c-primary-2); text-decoration: none; }
+a:hover { text-decoration: underline; }
+kbd {
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0.05em 0.45em;
+  font-size: 0.85em;
+  color: var(--c-primary);
+}
+
+/* ========== HERO ============================================== */
+.hero {
+  background:
+    radial-gradient(circle at 20% 20%, rgba(37, 99, 235, 0.4) 0%, transparent 50%),
+    radial-gradient(circle at 80% 80%, rgba(245, 158, 11, 0.25) 0%, transparent 50%),
+    linear-gradient(135deg, #0a3055 0%, #1e3a8a 100%);
+  color: white; padding: 4em 2em 3em;
+  position: relative; overflow: hidden;
+}
+.hero::before {
+  content: ''; position: absolute; inset: 0;
+  background-image: url('assets/ex3_ushape_iso.png');
+  background-size: cover; background-position: center;
+  opacity: 0.10; filter: blur(2px);
+}
+.hero-inner { max-width: 1100px; margin: 0 auto; position: relative; z-index: 1; }
+.hero h1 {
+  font-size: clamp(2.2em, 5vw, 3.8em);
+  font-weight: 800; margin: 0 0 0.4em; line-height: 1.1;
+}
+.hero .subtitle {
+  font-size: 1.2em; color: #cbd5e1; max-width: 680px; margin: 0 0 1.5em;
+}
+.hero-actions { display: flex; gap: 0.8em; align-items: center; flex-wrap: wrap; }
+.search-trigger {
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: white;
+  padding: 0.6em 1em;
+  border-radius: 8px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 0.5em;
+  font: inherit; font-size: 0.92em;
+  min-width: 240px;
+}
+.search-trigger:hover { background: rgba(255, 255, 255, 0.2); }
+.search-trigger .placeholder { color: #cbd5e1; flex: 1; text-align: left; }
+.badge {
+  background: rgba(255, 255, 255, 0.13);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  padding: 0.45em 0.85em; border-radius: 999px;
+  font-size: 0.86em; font-weight: 500;
+}
+.badge .dot {
+  display: inline-block; width: 0.5em; height: 0.5em;
+  border-radius: 50%; margin-right: 0.4em; vertical-align: middle;
+}
+.badge.ok .dot { background: var(--c-success); }
+.badge.info .dot { background: var(--c-primary-2); }
+
+/* ========== TABS / MODES ===================================== */
+.modes-bar {
+  background: white;
+  border-bottom: 1px solid var(--c-border);
+  position: sticky; top: 0; z-index: 50;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+}
+.modes-inner {
+  max-width: 1400px; margin: 0 auto;
+  display: flex; align-items: center; gap: 0.5em;
+  padding: 0 1.5em;
+}
+.modes-inner .hamburger {
+  display: none;
+  background: none; border: none;
+  padding: 0.5em; cursor: pointer;
+  font-size: 1.4em; color: var(--c-primary);
+}
+.mode-tab {
+  background: none; border: none;
+  padding: 1em 1.4em;
+  cursor: pointer; font: inherit;
+  color: var(--c-text-soft);
+  border-bottom: 3px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+  font-weight: 500;
+}
+.mode-tab:hover { color: var(--c-primary); }
+.mode-tab[aria-selected="true"] {
+  color: var(--c-primary);
+  border-bottom-color: var(--c-primary-2);
+  font-weight: 600;
+}
+.mode-tab .badge-count {
+  background: var(--c-surface-2);
+  border-radius: 10px; padding: 0.05em 0.5em;
+  font-size: 0.78em; margin-left: 0.4em;
+  color: var(--c-text-very-soft);
+}
+
+/* ========== LAYOUT ============================================ */
+.app {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  max-width: 1400px; margin: 0 auto; align-items: start;
+}
+.sidebar {
+  position: sticky; top: 56px;
+  height: calc(100vh - 56px); overflow-y: auto;
+  padding: 2em 1.5em;
+  border-right: 1px solid var(--c-border);
+  background: var(--c-surface);
+}
+.sidebar h3 {
+  font-size: 0.75em; text-transform: uppercase;
+  color: var(--c-text-very-soft);
+  margin: 1.4em 0 0.4em; letter-spacing: 0.06em;
+}
+.sidebar h3:first-child { margin-top: 0; }
+.sidebar a {
+  display: block; padding: 0.4em 0.6em; margin: 0;
+  color: var(--c-text-soft); border-radius: 6px;
+  font-size: 0.93em; transition: all 0.15s; text-decoration: none;
+}
+.sidebar a:hover { background: var(--c-surface-2); color: var(--c-primary); }
+.sidebar a.active {
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--c-primary-2); font-weight: 600;
+}
+.content {
+  padding: 2.5em 3em;
+  max-width: 920px;
+  background: var(--c-surface);
+  min-height: calc(100vh - 56px);
+}
+.content[hidden] { display: none; }
+
+@media (max-width: 900px) {
+  .app { grid-template-columns: 1fr; }
+  .sidebar {
+    position: fixed; top: 0; left: 0;
+    width: 280px; height: 100vh;
+    transform: translateX(-100%); transition: transform 0.25s;
+    z-index: 100; box-shadow: var(--shadow-lg);
+  }
+  .sidebar.open { transform: translateX(0); }
+  .modes-inner .hamburger { display: block; }
+  .content { padding: 1.5em 1.2em; }
+  .hero { padding: 3em 1.2em 2em; }
+}
+
+/* ========== SECTIONS ========================================== */
+.section { margin-bottom: 4em; scroll-margin-top: 80px; }
+.section h2 {
+  font-size: 1.85em; font-weight: 800;
+  margin: 0 0 0.3em; color: var(--c-primary);
+  border-left: 4px solid var(--c-primary-2);
+  padding-left: 0.5em;
+}
+.section h3 {
+  font-size: 1.25em; margin: 1.6em 0 0.5em;
+  color: var(--c-primary); font-weight: 700;
+}
+.section .lead {
+  font-size: 1.08em; color: var(--c-text-soft); margin: 0 0 1.2em;
+}
+
+/* ========== CARDS ============================================= */
+.card {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  padding: 1.4em 1.5em;
+  margin: 1em 0 1.5em;
+  box-shadow: var(--shadow);
+}
+.card.tip {
+  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+  border: 1px solid #bfdbfe; border-left: 4px solid var(--c-primary-2);
+}
+.card.warning {
+  background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+  border: 1px solid #fde68a; border-left: 4px solid var(--c-warning);
+}
+.card.danger {
+  background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+  border: 1px solid #fecaca; border-left: 4px solid var(--c-danger);
+}
+.card .card-title {
+  font-weight: 700; margin: 0 0 0.4em; color: var(--c-primary);
+}
+
+/* ========== STEPS (Quickstart) =============================== */
+.steps { counter-reset: step; margin: 1em 0 0; }
+.step {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 1.4em; margin: 1em 0;
+  align-items: start;
+  padding: 1.2em; background: var(--c-surface-2);
+  border-radius: var(--radius);
+  border: 1px solid var(--c-border);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.step:hover { box-shadow: var(--shadow); transform: translateY(-1px); }
+.step::before {
+  counter-increment: step;
+  content: counter(step);
+  width: 44px; height: 44px;
+  background: var(--c-primary-2); color: white;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 1.2em;
+  flex-shrink: 0;
+}
+.step-content h4 {
+  margin: 0 0 0.4em; font-size: 1.15em;
+  color: var(--c-primary); font-weight: 700;
+}
+.step-content p { margin: 0.4em 0; }
+.step-content .expected {
+  background: rgba(5, 150, 105, 0.08);
+  border-left: 3px solid var(--c-success);
+  padding: 0.6em 0.9em; border-radius: 6px;
+  margin: 0.6em 0; font-size: 0.95em;
+}
+.step-content .expected::before {
+  content: '✓ '; color: var(--c-success); font-weight: 700;
+}
+
+/* ========== ¿Y AHORA? — pathways ============================= */
+.pathways {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1em; margin-top: 2em;
+}
+.pathway {
+  background: white;
+  border: 2px solid var(--c-border);
+  border-radius: var(--radius);
+  padding: 1.4em;
+  cursor: pointer; text-decoration: none;
+  color: inherit;
+  transition: all 0.18s;
+  display: block;
+}
+.pathway:hover {
+  border-color: var(--c-primary-2);
+  transform: translateY(-3px); box-shadow: var(--shadow-lg);
+  text-decoration: none;
+}
+.pathway .pathway-icon {
+  font-size: 2em; margin-bottom: 0.4em;
+}
+.pathway .pathway-title {
+  font-weight: 700; color: var(--c-primary);
+  font-size: 1.05em;
+}
+.pathway .pathway-desc {
+  color: var(--c-text-soft); font-size: 0.93em; margin-top: 0.3em;
+}
+
+/* ========== RECETAS =========================================== */
+.recipe-meta {
+  display: flex; gap: 1.2em; flex-wrap: wrap;
+  margin: 0.6em 0 1.2em;
+  font-size: 0.92em; color: var(--c-text-soft);
+}
+.recipe-meta span { display: inline-flex; align-items: center; gap: 0.3em; }
+.difficulty { color: var(--c-warning); font-weight: 600; }
+
+/* ========== FIGURES =========================================== */
+figure { margin: 1.2em 0; text-align: center; }
+figure img, figure video, figure picture > img {
+  max-width: 100%; border-radius: var(--radius);
+  box-shadow: var(--shadow); border: 1px solid var(--c-border);
+}
+figcaption {
+  margin-top: 0.6em; font-size: 0.92em;
+  color: var(--c-text-soft); font-style: italic;
+}
+
+.fig-row {
+  display: grid; gap: 1em;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  margin: 1em 0;
+}
+.fig-row figure { margin: 0; }
+
+/* ========== VIEWER 3D ========================================= */
+.viewer-section {
+  background: linear-gradient(135deg, #0a3055 0%, #1e3a8a 100%);
+  border-radius: var(--radius);
+  padding: 1.8em; margin: 1.5em 0;
+  color: white; box-shadow: var(--shadow-lg);
+}
+.viewer-section h3 { color: white; margin: 0 0 0.4em; }
+.viewer-section .desc { color: #cbd5e1; margin: 0 0 1em; font-size: 0.95em; }
+.viewer-canvas {
+  width: 100%; height: 460px;
+  background: linear-gradient(180deg, #1e293b 0%, #334155 100%);
+  border-radius: 8px; cursor: grab; position: relative;
+}
+.viewer-canvas:active { cursor: grabbing; }
+.viewer-canvas .fallback {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: #cbd5e1;
+}
+.viewer-canvas .fallback img {
+  max-width: 100%; max-height: 100%; border-radius: 8px;
+}
+.viewer-controls {
+  display: flex; gap: 0.5em; margin-top: 1em; flex-wrap: wrap;
+}
+.btn {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: white; padding: 0.5em 1em;
+  border-radius: 6px; cursor: pointer;
+  font: inherit; font-size: 0.9em; font-weight: 500;
+  transition: all 0.15s;
+}
+.btn:hover { background: rgba(255, 255, 255, 0.2); transform: translateY(-1px); }
+
+/* ========== TABLES ============================================ */
+table {
+  width: 100%; border-collapse: collapse;
+  margin: 1em 0; font-size: 0.94em;
+  background: white; border-radius: var(--radius);
+  overflow: hidden; box-shadow: var(--shadow);
+}
+th {
+  background: var(--c-primary); color: white;
+  text-align: left; padding: 0.7em 1em; font-weight: 600;
+}
+td { padding: 0.7em 1em; border-top: 1px solid var(--c-border); }
+tr:hover td { background: var(--c-surface-2); }
+
+/* ========== PRE + COPY BUTTON ================================ */
+.code-wrap { position: relative; margin: 1em 0; }
+pre {
+  background: #0f172a; color: #e2e8f0;
+  padding: 1.1em 3.5em 1.1em 1.3em;
+  border-radius: var(--radius);
+  overflow-x: auto;
+  font-size: 0.92em; line-height: 1.55;
+  box-shadow: var(--shadow);
+}
+:not(pre) > code {
+  background: #f1f5f9; color: #0a3055;
+  padding: 0.15em 0.45em; border-radius: 4px; font-size: 0.9em;
+}
+.copy-btn {
+  position: absolute; top: 0.7em; right: 0.7em;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #cbd5e1; padding: 0.35em 0.7em;
+  border-radius: 4px; cursor: pointer; font-size: 0.82em;
+  font: inherit; font-size: 0.82em;
+  transition: all 0.15s;
+}
+.copy-btn:hover {
+  background: rgba(255, 255, 255, 0.18); color: white;
+}
+.copy-btn.copied { background: var(--c-success); color: white; }
+
+/* ========== PANEL MOCKUP ===================================== */
+.panel-mockup {
+  background: #2a2a2a;
+  border: 1px solid #4a4a4a;
+  border-radius: 6px;
+  padding: 0.8em; color: #e0e0e0;
+  font-size: 0.85em; max-width: 360px;
+  box-shadow: var(--shadow);
+}
+.panel-mockup .panel-title {
+  background: linear-gradient(180deg, #444, #333);
+  padding: 0.5em 0.8em;
+  margin: -0.8em -0.8em 0.6em;
+  border-radius: 6px 6px 0 0; font-weight: 600;
+}
+.panel-mockup .row {
+  display: flex; align-items: center; gap: 0.5em;
+  padding: 0.3em 0.4em; border-radius: 3px;
+}
+.panel-mockup .row.highlight {
+  background: rgba(245, 158, 11, 0.15);
+  border-left: 3px solid var(--c-accent);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { background: rgba(245, 158, 11, 0.12); }
+  50% { background: rgba(245, 158, 11, 0.32); }
+}
+.panel-mockup .label { flex: 1; color: #bbb; font-size: 0.92em; }
+.panel-mockup .value {
+  background: #1a1a1a; border: 1px solid #555;
+  padding: 0.2em 0.5em; border-radius: 3px;
+  color: #87ceeb; font-family: monospace; font-size: 0.85em;
+}
+.panel-mockup .toggle {
+  width: 1em; height: 1em; border: 2px solid #888; border-radius: 2px;
+  flex-shrink: 0;
+}
+.panel-mockup .toggle.on {
+  background: #2563eb; border-color: #2563eb; position: relative;
+}
+.panel-mockup .toggle.on::after {
+  content: '✓'; position: absolute; top: -3px; left: 1px;
+  color: white; font-size: 0.85em;
+}
+.panel-mockup .button {
+  background: linear-gradient(180deg, #4a4a4a, #383838);
+  border: 1px solid #555;
+  padding: 0.5em 1em; border-radius: 4px;
+  text-align: center; margin: 0.4em 0; cursor: pointer;
+}
+.panel-mockup .button.primary {
+  background: linear-gradient(180deg, #2563eb, #1e40af);
+  border-color: #1e40af; color: white; font-weight: 600;
+}
+
+/* ========== HERO CTA ========================================= */
+.hero-cta {
+  display: inline-flex; align-items: center; gap: 0.6em;
+  background: var(--c-accent);
+  color: #1c1f1c;
+  border: none; border-radius: 10px;
+  padding: 1em 2em;
+  font: inherit; font-weight: 700; font-size: 1.1em;
+  cursor: pointer;
+  text-decoration: none;
+  box-shadow: 0 6px 24px rgba(245, 158, 11, 0.5);
+  transition: transform 0.18s, box-shadow 0.18s, background 0.18s;
+}
+.hero-cta:hover {
+  transform: translateY(-2px);
+  background: #fbbf24;
+  box-shadow: 0 10px 32px rgba(245, 158, 11, 0.6);
+  text-decoration: none;
+}
+.hero-cta::after { content: '→'; font-size: 1.3em; }
+
+/* ========== PRE-QUICKSTART: esto vas a poder hacer =========== */
+.preview-grid {
+  display: grid; gap: 1em;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  margin: 1.5em 0;
+}
+.preview-card {
+  position: relative; overflow: hidden;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  aspect-ratio: 4/3;
+}
+.preview-card img {
+  width: 100%; height: 100%; object-fit: cover;
+  display: block;
+  transition: transform 0.4s;
+}
+.preview-card:hover img { transform: scale(1.05); }
+.preview-card .preview-label {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  background: linear-gradient(to top, rgba(0,0,0,0.85), transparent);
+  color: white; padding: 1.4em 1em 0.9em;
+  font-weight: 600; font-size: 1.05em;
+}
+.preview-card .preview-label .preview-time {
+  font-weight: 400; font-size: 0.82em; opacity: 0.85;
+  display: block; margin-top: 0.2em;
+}
+
+/* ========== STEP MEJORADO (imagen grande + texto corto) ====== */
+.step-visual {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr;
+  gap: 1.5em;
+  align-items: center;
+  background: white;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  padding: 1.5em;
+  margin: 1.5em 0;
+  box-shadow: var(--shadow);
+}
+.step-visual.flip { grid-template-columns: 1.5fr 1fr; }
+.step-visual.flip .step-visual-text { order: -1; }
+.step-visual-img {
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.step-visual-img img {
+  width: 100%; display: block;
+  background: #2a2a2a;
+}
+.step-visual-img .step-num {
+  position: absolute; top: 0.8em; left: 0.8em;
+  background: var(--c-primary-2); color: white;
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 1.3em;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.step-visual-text h3 {
+  margin: 0 0 0.4em; font-size: 1.4em; color: var(--c-primary);
+}
+.step-visual-text p { margin: 0.4em 0; }
+@media (max-width: 750px) {
+  .step-visual, .step-visual.flip {
+    grid-template-columns: 1fr;
+  }
+  .step-visual.flip .step-visual-text { order: 0; }
+}
+
+/* ========== STATUS DOT ======================================= */
+.status-circle {
+  display: inline-block; width: 0.95em; height: 0.95em;
+  border-radius: 50%; margin-right: 0.5em; vertical-align: middle;
+}
+.status-ok { background: var(--c-success); }
+.status-warn { background: var(--c-warning); }
+.status-fail { background: var(--c-danger); }
+
+/* ========== TOC PROGRESS ===================================== */
+.toc-progress {
+  position: fixed; top: 0; left: 0; right: 0; height: 3px;
+  background: linear-gradient(90deg, var(--c-primary-2), var(--c-accent));
+  transform-origin: left; transform: scaleX(0);
+  z-index: 200;
+}
+
+/* ========== SEARCH MODAL ===================================== */
+.search-modal {
+  position: fixed; inset: 0;
+  background: rgba(15, 23, 42, 0.7);
+  backdrop-filter: blur(6px);
+  display: none; align-items: flex-start;
+  justify-content: center; z-index: 500;
+  padding-top: 8vh;
+}
+.search-modal.open { display: flex; }
+.search-box {
+  background: white; width: 90%;
+  max-width: 600px; border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  display: flex; flex-direction: column;
+  max-height: 70vh; overflow: hidden;
+}
+.search-box input {
+  width: 100%; border: none;
+  padding: 1.1em 1.3em;
+  font: inherit; font-size: 1.1em;
+  border-bottom: 1px solid var(--c-border);
+  outline: none;
+}
+.search-results {
+  overflow-y: auto; padding: 0.5em 0;
+}
+.search-result {
+  padding: 0.7em 1.2em; cursor: pointer;
+  border-left: 3px solid transparent;
+}
+.search-result:hover, .search-result.active {
+  background: var(--c-surface-2);
+  border-left-color: var(--c-primary-2);
+}
+.search-result .res-section {
+  font-size: 0.76em; color: var(--c-text-very-soft);
+  text-transform: uppercase; letter-spacing: 0.05em;
+  margin-bottom: 0.15em;
+}
+.search-result .res-title {
+  color: var(--c-primary); font-weight: 600;
+}
+.search-result .res-snippet {
+  font-size: 0.88em; color: var(--c-text-soft); margin-top: 0.2em;
+}
+.search-result mark {
+  background: rgba(245, 158, 11, 0.4);
+  color: inherit; padding: 0 0.1em; border-radius: 2px;
+}
+.search-empty {
+  padding: 1.4em 1.2em; color: var(--c-text-very-soft);
+  text-align: center;
+}
+
+/* ========== FOOTER =========================================== */
+footer.site-footer {
+  background: #0f172a; color: #cbd5e1;
+  padding: 2em 1.5em 1.5em;
+  margin-top: 3em;
+}
+footer.site-footer .footer-inner {
+  max-width: 1100px; margin: 0 auto;
+  display: flex; justify-content: space-between;
+  flex-wrap: wrap; gap: 1em;
+}
+footer.site-footer a { color: #93c5fd; }
+footer.site-footer .meta { color: #64748b; font-size: 0.88em; }
+
+/* ========== UTILS ============================================ */
+[hidden] { display: none !important; }
+dfn[title] {
+  border-bottom: 1px dotted var(--c-primary-2);
+  cursor: help; font-style: normal;
+}
+</style>
+</head>
+<body>
+
+<a href="#main" class="skip-link">Saltar al contenido</a>
+
+<div class="toc-progress" id="toc-progress" aria-hidden="true"></div>
+
+<header class="hero">
+<div class="hero-inner">
+<h1>Diseña tu andamio en 5 minutos</h1>
+<p class="subtitle">
+Sin saber de cálculo de estructuras. Sin pelearte con Blender. Sigue 5
+pasos y tendrás un <strong>andamio profesional</strong> con plataformas,
+escaleras, cruces y cálculo según norma EN&nbsp;1993&nbsp;+&nbsp;12811.
+</p>
+<div class="hero-actions">
+<a href="#qs-install" class="hero-cta" data-go-mode="quickstart">
+Empezar tutorial
+</a>
+<button class="search-trigger" id="search-trigger" aria-label="Abrir búsqueda">
+<span aria-hidden="true">🔍</span>
+<span class="placeholder">Buscar…</span>
+<kbd>Ctrl K</kbd>
+</button>
+<span class="badge ok"><span class="dot" aria-hidden="true"></span>v0.7.12 · 421 tests</span>
+</div>
+</div>
+</header>
+
+<nav class="modes-bar" aria-label="Modos del tutorial">
+<div class="modes-inner">
+<button class="hamburger" id="hamburger" aria-label="Menú lateral">☰</button>
+<button class="mode-tab" id="tab-quickstart" aria-selected="true" data-mode="quickstart">
+🚀 Quickstart <span class="badge-count">5 pasos</span>
+</button>
+<button class="mode-tab" id="tab-recetas" aria-selected="false" data-mode="recetas">
+📖 Recetas <span class="badge-count">5</span>
+</button>
+<button class="mode-tab" id="tab-referencia" aria-selected="false" data-mode="referencia">
+📚 Referencia
+</button>
+</div>
+</nav>
+
+<div class="app">
+
+<aside class="sidebar" id="sidebar">
+<div id="sidebar-quickstart">
+<h3>Quickstart</h3>
+<a href="#qs-install">1. Instala el addon</a>
+<a href="#qs-empties">2. Crea dos empties</a>
+<a href="#qs-path">3. Añade a la trayectoria</a>
+<a href="#qs-generate">4. Pulsa Generar</a>
+<a href="#qs-done">5. ¡Listo!</a>
+</div>
+
+<div id="sidebar-recetas" hidden>
+<h3>Recetas</h3>
+<a href="#r-fachada-l">Fachada en L</a>
+<a href="#r-torre">Torre cuadrada</a>
+<a href="#r-anclajes">Anclajes 4 plantas</a>
+<a href="#r-calculo">Cálculo Q3 + viento A</a>
+<a href="#r-cad">Plano CAD multihoja</a>
+</div>
+
+<div id="sidebar-referencia" hidden>
+<h3>Referencia</h3>
+<a href="#ref-viewer">Visor 3D</a>
+<a href="#ref-visual">Comparativas visuales</a>
+<a href="#ref-panel">Tour del panel</a>
+<a href="#ref-dims">Dimensiones</a>
+<a href="#ref-cargas">Cargas y combinación</a>
+<a href="#ref-cad">Plano CAD</a>
+<a href="#ref-export">Exportar BOM e informe</a>
+<h3>Ayuda</h3>
+<a href="#help-symptoms">Solución por síntomas</a>
+<a href="#help-codes">Códigos de error</a>
+<a href="#help-glossary">Glosario</a>
+</div>
+</aside>
+
+<main class="content" id="main">
+
+<!-- =================================================================
+     MODE: QUICKSTART
+     ================================================================= -->
+<div id="mode-quickstart">
+
+<section class="section" id="qs-intro">
+<h2 style="border: none; padding: 0; margin-bottom: 0.3em;">Esto vas a poder hacer</h2>
+<p class="lead" style="font-size: 1.1em; margin-bottom: 1em;">
+3 ejemplos reales que vas a aprender a generar — desde lo más simple
+hasta una torre de 4 plantas. Pulsa los botones del menú superior si
+quieres saltar al ejemplo concreto.
+</p>
+
+<div class="preview-grid">
+<a href="#qs-install" class="preview-card">
+<img src="assets/ex1_recto_iso.png" alt="Andamio recto de 8 m" loading="lazy" width="800" height="500">
+<div class="preview-label">
+Andamio recto
+<span class="preview-time">⏱ 5 minutos</span>
+</div>
+</a>
+<a href="#r-fachada-l" class="preview-card" data-go-mode="recetas">
+<img src="assets/ex2_lshape_iso.png" alt="Andamio en L de fachada en esquina" loading="lazy" width="800" height="500">
+<div class="preview-label">
+Fachada en L
+<span class="preview-time">⏱ 8 minutos</span>
+</div>
+</a>
+<a href="#r-anclajes" class="preview-card" data-go-mode="recetas">
+<img src="assets/ex5_ties_iso.png" alt="Andamio de 4 plantas con anclajes" loading="lazy" width="800" height="500">
+<div class="preview-label">
+4 plantas con anclajes
+<span class="preview-time">⏱ 10 minutos</span>
+</div>
+</a>
+</div>
+
+<div class="card tip" style="margin-top: 2em;">
+<p class="card-title">Tu primer andamio · 5 pasos · 5 minutos</p>
+<p style="margin: 0.5em 0 0;">
+No necesitas saber de cálculo estructural ni de modelado 3D. El addon
+te lo genera todo a partir de unos puntos de referencia.
+</p>
+</div>
+</section>
+
+<section class="section" id="qs-install">
+<h2>Paso 1 · Instala el addon</h2>
+<div class="step-visual">
+<div class="step-visual-img">
+<span class="step-num" aria-hidden="true">1</span>
+<div style="background: #2a2a2a; padding: 2em; color: #ddd; text-align: center; min-height: 250px; display: flex; align-items: center; justify-content: center; flex-direction: column;">
+<div style="font-size: 3em;" aria-hidden="true">⚙️</div>
+<div style="font-family: monospace; margin-top: 0.5em;">
+Edit → Preferences → Add-ons<br>
+→ Install… → andamios_addon.py
+</div>
+</div>
+</div>
+<div class="step-visual-text">
+<h3>Carga el fichero del addon en Blender</h3>
+<p>En Blender:</p>
+<ol style="margin: 0.5em 0;">
+<li><strong>Edit → Preferences → Add-ons</strong></li>
+<li>Pulsa <strong>Install…</strong> y elige el fichero
+<code>andamios_addon.py</code></li>
+<li>Marca la casilla <strong>"Andamios trayectoria"</strong></li>
+</ol>
+<p class="expected" style="margin-top: 0.8em;">
+Aparece una pestaña <strong>Andamios</strong> en la barra lateral del
+viewport. Si no la ves, pulsa <kbd>N</kbd>.
+</p>
+</div>
+</div>
+</section>
+
+<section class="section" id="qs-empties">
+<h2>Paso 2 · Coloca dos puntos en el espacio</h2>
+<div class="step-visual flip">
+<div class="step-visual-text">
+<h3>Crea dos "empties" — son los marcadores que definen el recorrido del andamio</h3>
+<p>En el viewport 3D:</p>
+<ol style="margin: 0.5em 0;">
+<li><strong>Add → Empty → Plain Axes</strong> — uno en
+<code>(0, 0, 0)</code></li>
+<li>Otro empty en <code>(8, 0, 0)</code></li>
+<li>Renómbralos <code>P0</code> y <code>P1</code> para
+encontrarlos rápido</li>
+</ol>
+<p class="expected" style="margin-top: 0.8em;">
+Dos cruces 3D pequeñas separadas 8 m sobre el eje X. Estos serán los
+extremos de tu andamio.
+</p>
+</div>
+<div class="step-visual-img">
+<span class="step-num" aria-hidden="true">2</span>
+<div style="background: linear-gradient(180deg, #2a2a2a 0%, #1a1a1a 100%); padding: 2em; min-height: 250px; display: flex; align-items: center; justify-content: space-between; color: white; font-family: monospace;">
+<div style="text-align: center;">
+<div style="color: #ef4444; font-size: 2em;">+</div>
+<div>P0</div>
+<div style="color: #94a3b8; font-size: 0.85em;">(0, 0, 0)</div>
+</div>
+<div style="color: #475569;">⟶ 8 m ⟶</div>
+<div style="text-align: center;">
+<div style="color: #ef4444; font-size: 2em;">+</div>
+<div>P1</div>
+<div style="color: #94a3b8; font-size: 0.85em;">(8, 0, 0)</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+
+<section class="section" id="qs-path">
+<h2>Paso 3 · Añádelos a la lista del addon</h2>
+<div class="step-visual">
+<div class="step-visual-img">
+<span class="step-num" aria-hidden="true">3</span>
+<div class="panel-mockup" style="max-width: none; margin: 0;">
+<div class="panel-title">▼ Trayectoria</div>
+<div class="row highlight">
+<span aria-hidden="true">▶</span><span class="label">P0</span><span class="value">Empty.001</span>
+</div>
+<div class="row">
+<span aria-hidden="true">▶</span><span class="label">P1</span><span class="value">Empty.002</span>
+</div>
+<div class="button">+ / − / ↑ / ↓</div>
+</div>
+</div>
+<div class="step-visual-text">
+<h3>Asigna los empties a la lista <em>Trayectoria</em></h3>
+<p>En la pestaña <strong>Andamios → Trayectoria</strong>:</p>
+<ol style="margin: 0.5em 0;">
+<li>Pulsa <code>+</code> dos veces (crea dos filas)</li>
+<li>En la primera fila → desplegable → elige <code>P0</code></li>
+<li>En la segunda fila → desplegable → elige <code>P1</code></li>
+</ol>
+<p class="expected" style="margin-top: 0.8em;">
+Las dos filas se llenan con los nombres de los empties.
+</p>
+</div>
+</div>
+</section>
+
+<section class="section" id="qs-generate">
+<h2>Paso 4 · Pulsa Generar</h2>
+<div class="step-visual flip">
+<div class="step-visual-text">
+<h3>Un clic y tienes andamio</h3>
+<p>Deja los valores por defecto:</p>
+<ul style="margin: 0.5em 0;">
+<li><strong>Profundidad:</strong> 0.732 m (Layher 73)</li>
+<li><strong>Plantas:</strong> 2</li>
+<li><strong>Altura por planta:</strong> 2.0 m</li>
+</ul>
+<p>Pulsa <strong>⟳ Generar / Actualizar</strong>.</p>
+<p class="expected" style="margin-top: 0.8em;">
+El andamio aparece en el viewport: postes, travesaños, plataformas,
+barandillas, escalera con trampilla y cruces, todo a la vez.
+</p>
+</div>
+<div class="step-visual-img">
+<span class="step-num" aria-hidden="true">4</span>
+<div class="panel-mockup" style="max-width: none; margin: 0;">
+<div class="panel-title">▼ Dimensiones</div>
+<div class="row"><span class="label">Profundidad</span><span class="value">0.732 m</span></div>
+<div class="row"><span class="label">Plantas</span><span class="value">2</span></div>
+<div class="row"><span class="label">Altura/planta</span><span class="value">2.0 m</span></div>
+<div class="button primary" style="animation: pulse 1.4s ease-in-out infinite; font-size: 1em;">⟳ Generar / Actualizar</div>
+</div>
+</div>
+</div>
+</section>
+
+<section class="section" id="qs-done">
+<h2>5 · ¡Listo!</h2>
+<div class="card tip" style="text-align: center;">
+<p style="font-size: 2em; margin: 0;">🎉</p>
+<p class="card-title" style="font-size: 1.3em;">¡Tienes tu primer andamio!</p>
+<figure style="margin: 1em 0;">
+<img src="assets/anim_construction.webp" alt="Animación de andamio creciendo de 1 a 4 plantas"
+     loading="lazy" width="800" height="500"
+     onerror="this.src='assets/ex1_recto_iso.png'">
+<figcaption>Cambia <code>floor_count</code> y verás cómo crece el andamio
+en tiempo real (con Auto-update activo)</figcaption>
+</figure>
+<p style="color: var(--c-text-soft); margin-top: 1em;">
+Tu andamio actual son 8 m × 2 plantas con plataformas, barandillas,
+escalera con trampilla y cruces de arriostramiento — todo generado
+automáticamente.
+</p>
+</div>
+
+<h3 style="text-align: center; margin-top: 2em;">¿Y ahora?</h3>
+<div class="pathways">
+<a href="#r-fachada-l" class="pathway" data-go-mode="recetas">
+<div class="pathway-icon" aria-hidden="true">📐</div>
+<div class="pathway-title">Probar formas L o U</div>
+<div class="pathway-desc">Añade más empties para que el andamio gire en esquina</div>
+</a>
+<a href="#r-calculo" class="pathway" data-go-mode="recetas">
+<div class="pathway-icon" aria-hidden="true">🧮</div>
+<div class="pathway-title">Calcular estructura</div>
+<div class="pathway-desc">Comprueba si resiste según EN 1993 y EN 12811</div>
+</a>
+<a href="#r-cad" class="pathway" data-go-mode="recetas">
+<div class="pathway-icon" aria-hidden="true">📄</div>
+<div class="pathway-title">Exportar plano CAD</div>
+<div class="pathway-desc">Hoja A3 con cotas normativas para llevar a obra</div>
+</a>
+</div>
+</section>
+
+</div><!-- /mode-quickstart -->
+
+
+<!-- =================================================================
+     MODE: RECETAS
+     ================================================================= -->
+<div id="mode-recetas" hidden>
+
+<section class="section" id="r-intro">
+<p class="lead" style="font-size: 1.15em;">
+Casos prácticos paso a paso. Cada receta indica
+<span class="difficulty">★ dificultad</span>, <strong>tiempo</strong> y
+<strong>prerequisitos</strong>.
+</p>
+</section>
+
+<!-- ===== Receta: Fachada en L ===== -->
+<section class="section" id="r-fachada-l">
+<h2>📐 Andamio de fachada en L</h2>
+<div class="recipe-meta">
+<span class="difficulty">★ Fácil</span>
+<span aria-hidden="true">🕐</span><span>5 minutos</span>
+<span aria-hidden="true">📋</span><span>Quickstart completado</span>
+</div>
+
+<div class="fig-row">
+<figure>
+<img src="assets/ex2_lshape_iso.png" alt="Andamio L: dos tramos en ángulo recto"
+     loading="lazy" width="800" height="500">
+<figcaption>Resultado — vista isométrica</figcaption>
+</figure>
+<figure>
+<img src="assets/ex2_lshape_top.png" alt="Andamio L vista en planta"
+     loading="lazy" width="800" height="500">
+<figcaption>Vista en planta</figcaption>
+</figure>
+</div>
+
+<div class="steps">
+<div class="step">
+<div class="step-content">
+<h4>Crea 3 empties en planta</h4>
+<p>En la sección <strong>Trayectoria</strong>:</p>
+<ul>
+<li><code>P0</code> en <code>(0, 0, 0)</code></li>
+<li><code>P1</code> en <code>(5, 0, 0)</code> — primer tramo de 5 m</li>
+<li><code>P2</code> en <code>(5, 3, 0)</code> — gira 90° y avanza 3 m</li>
+</ul>
+</div>
+</div>
+<div class="step">
+<div class="step-content">
+<h4>Añade los 3 a la lista</h4>
+<p>Pulsa el botón <code>+</code> tres veces y asigna cada empty
+en orden. <strong>El orden importa</strong>: la polilínea va de
+<code>P0</code> → <code>P1</code> → <code>P2</code>.</p>
+</div>
+</div>
+<div class="step">
+<div class="step-content">
+<h4>Pulsa Generar</h4>
+<p>El addon detecta la esquina en <code>P1</code>, calcula la
+<dfn title="Línea de simetría que parte el ángulo de una esquina en dos partes iguales — el poste de esquina se coloca sobre ella">bisectriz</dfn>
+y genera una plataforma de esquina dedicada.</p>
+<p class="expected">Andamio en L de dos tramos rectos unidos por una
+esquina con corner-plank.</p>
+</div>
+</div>
+</div>
+</section>
+
+<!-- ===== Receta: Torre cerrada ===== -->
+<section class="section" id="r-torre">
+<h2>🏗️ Torre cuadrada cerrada</h2>
+<div class="recipe-meta">
+<span class="difficulty">★ Fácil</span>
+<span aria-hidden="true">🕐</span><span>5 minutos</span>
+<span aria-hidden="true">📋</span><span>Quickstart completado</span>
+</div>
+
+<figure>
+<img src="assets/ex7_torre_iso.png" alt="Torre cuadrada de 4 plantas con polilínea cerrada"
+     loading="lazy" width="800" height="500">
+<figcaption>Torre 3 m × 3 m × 4 plantas (8 m de altura)</figcaption>
+</figure>
+
+<div class="steps">
+<div class="step">
+<div class="step-content">
+<h4>4 empties en cuadrado + closed_loop</h4>
+<p>Crea empties en <code>(0,0,0)</code>, <code>(3,0,0)</code>,
+<code>(3,3,0)</code>, <code>(0,3,0)</code>. En el panel,
+activa el toggle <strong>closed_loop</strong>: el último punto se
+conectará con el primero.</p>
+</div>
+</div>
+<div class="step">
+<div class="step-content">
+<h4>Sube a 4 plantas y genera</h4>
+<p>En Dimensiones: <code>floor_count = 4</code>. Pulsa Generar.</p>
+<p class="expected">Una torre cerrada con 4 niveles, ideal para
+mantenimiento de fachadas o como acceso vertical autónomo.</p>
+</div>
+</div>
+</div>
+</section>
+
+<!-- ===== Receta: Anclajes ===== -->
+<section class="section" id="r-anclajes">
+<h2>⚓ Andamio con anclajes (edificio 4 plantas)</h2>
+<div class="recipe-meta">
+<span class="difficulty">★★ Medio</span>
+<span aria-hidden="true">🕐</span><span>10 minutos</span>
+<span aria-hidden="true">📋</span><span>Quickstart + conocer EN 12811-2</span>
+</div>
+
+<figure>
+<img src="assets/ex5_ties_iso.png" alt="Andamio recto de 4 plantas con anclajes a fachada"
+     loading="lazy" width="800" height="500">
+<figcaption>Anclajes (Tie_*) cada 2 vanos × 1 planta — densidad EN 12811-2</figcaption>
+</figure>
+
+<div class="card warning">
+<p class="card-title">¿Cuándo necesitas anclajes?</p>
+<ul>
+<li>Altura total &gt; 8 m (lo exige <span title="EN 12811-2 §6.4">EN&nbsp;12811-2</span>)</li>
+<li>Vas a aplicar viento zona B o C en el cálculo</li>
+<li>Densidad mínima: 1 anclaje por <strong>4 m²</strong> de fachada</li>
+</ul>
+</div>
+
+<div class="steps">
+<div class="step">
+<div class="step-content">
+<h4>Andamio recto de 8 m × 4 plantas</h4>
+<p>Empties en <code>(0,0,0)</code> y <code>(8,0,0)</code>,
+<code>floor_count = 4</code>, <code>floor_height = 2.0</code>.</p>
+</div>
+</div>
+<div class="step">
+<div class="step-content">
+<h4>Activa anclajes</h4>
+<p>En la sección <strong>Anclajes</strong>:</p>
+<ul>
+<li><code>add_ties = ON</code></li>
+<li><code>tie_every_bays = 2</code> (cada 2 vanos)</li>
+<li><code>tie_every_floors = 1</code> (cada planta)</li>
+<li><code>tie_length = 0.5 m</code></li>
+</ul>
+<p class="expected">Tubos rojos saliendo de los postes traseros hacia
+la fachada. La densidad de anclajes es coherente con EN 12811-2.</p>
+</div>
+</div>
+</div>
+</section>
+
+<!-- ===== Receta: Cálculo Q3 + viento A ===== -->
+<section class="section" id="r-calculo">
+<h2>🧮 Cálculo estructural Q3 + viento zona A</h2>
+<div class="recipe-meta">
+<span class="difficulty">★★ Medio</span>
+<span aria-hidden="true">🕐</span><span>10 minutos</span>
+<span aria-hidden="true">📋</span><span>Quickstart + PyNiteFEA instalado</span>
+</div>
+
+<p class="lead">
+Caso típico: andamio de fachada con clase de servicio
+<dfn title="Q3 — uso general, ≈ 200 kg/m², equivalente a 4 trabajadores y herramienta. EN 12811-1 §6.2.2">Q3</dfn>
+y viento moderado (CTE zona A, terreno II).
+</p>
+
+<div class="steps">
+<div class="step">
+<div class="step-content">
+<h4>Genera el andamio (Quickstart)</h4>
+<p>Andamio recto 8 m × 2 plantas con valores por defecto.</p>
+</div>
+</div>
+<div class="step">
+<div class="step-content">
+<h4>Configura cargas en el panel "Cálculo estructural"</h4>
+<p>Despliega <strong>Cargas y combinación</strong>:</p>
+<div class="panel-mockup" style="margin: 0.8em 0;">
+<div class="panel-title">▼ Cargas y combinación</div>
+<div class="row"><span class="toggle on"></span><span class="label">Servicio (Q)</span></div>
+<div class="row"><span class="label">Clase</span><span class="value">Q3</span></div>
+<div class="row"><span class="toggle on"></span><span class="label">Viento (W)</span></div>
+<div class="row"><span class="label">Zona</span><span class="value">A</span></div>
+<div class="row"><span class="label">Terreno</span><span class="value">II</span></div>
+<div class="row"><span class="toggle on"></span><span class="label">Imperfecciones (I)</span></div>
+<div class="row"><span class="toggle"></span><span class="label">Carga barandilla</span></div>
+<div class="row"><span class="label">Combinación</span><span class="value">ULS_LeadL</span></div>
+</div>
+</div>
+</div>
+<div class="step">
+<div class="step-content">
+<h4>Comprueba modelo y ejecuta</h4>
+<p>En <strong>Ejecutar</strong>:</p>
+<ol>
+<li>Pulsa <strong>Comprobar modelo</strong>. Verifica errores de
+geometría antes de gastar tiempo en el cálculo.</li>
+<li>Si el semáforo es ✓ o ⚠, pulsa <strong>Ejecutar cálculo</strong>.</li>
+</ol>
+<p class="expected">Tras unos segundos, el viewport se colorea por
+utilización (verde-amarillo-rojo) y aparece un toast tipo:</p>
+<div class="code-wrap"><pre>✓ ANDAMIO SEGURO · util max 0,55 · δ_max 14 mm · 0/71 fallos</pre></div>
+</div>
+</div>
+<div class="step">
+<div class="step-content">
+<h4>Revisa resultados</h4>
+<p>Sub-paneles <strong>Resultados</strong> y <strong>Visualización</strong>
+muestran:</p>
+<ul>
+<li>Banner verde/ámbar/rojo según <code>util_max</code></li>
+<li>Lista de elementos críticos clicables (≥ 0,85)</li>
+<li>Botón <strong>Mostrar deformada</strong> para ver el andamio
+desplazado ×100 (estilo ANSYS)</li>
+</ul>
+</div>
+</div>
+</div>
+</section>
+
+<!-- ===== Receta: Plano CAD ===== -->
+<section class="section" id="r-cad">
+<h2>📄 Exportar plano CAD multihoja para subcontrata</h2>
+<div class="recipe-meta">
+<span class="difficulty">★ Fácil</span>
+<span aria-hidden="true">🕐</span><span>3 minutos</span>
+<span aria-hidden="true">📋</span><span>Andamio generado</span>
+</div>
+
+<p class="lead">
+Genera un HTML imprimible a PDF que cumple <strong>UNE-EN ISO&nbsp;129-1</strong>:
+cotas en mm con notación N×L=T, escalas normalizadas, ejes A/B/C — 1/2/3.
+</p>
+
+<div class="steps">
+<div class="step">
+<div class="step-content">
+<h4>Despliega "Exportar documentos"</h4>
+<p>El sub-panel <strong>Exportar documentos</strong> aparece tras
+generar el andamio.</p>
+</div>
+</div>
+<div class="step">
+<div class="step-content">
+<h4>Pulsa "Exportar plano CAD"</h4>
+<p>Selecciona la carpeta destino (en
+Linux con Snap Firefox guarda en <code>~/Escritorio</code> o
+<code>~/Documentos</code>, no en <code>/tmp</code>).</p>
+<p class="expected">Para andamio recto: 1 hoja con alzado + planta + iso.<br>
+Para U/L (≥ 2 tramos): 1 hoja overview + N hojas tramo, una por tramo recto.</p>
+</div>
+</div>
+<div class="step">
+<div class="step-content">
+<h4>Imprime a PDF</h4>
+<p>Abre el HTML en el navegador y pulsa <kbd>Ctrl P</kbd>:</p>
+<ul>
+<li>Tamaño del papel: <strong>A3</strong> apaisado</li>
+<li>Márgenes: <strong>Ninguno</strong></li>
+<li>Escala: <strong>100 %</strong></li>
+</ul>
+</div>
+</div>
+</div>
+</section>
+
+</div><!-- /mode-recetas -->
+
+
+<!-- =================================================================
+     MODE: REFERENCIA
+     ================================================================= -->
+<div id="mode-referencia" hidden>
+
+<section class="section" id="ref-intro">
+<p class="lead">
+Material para consultar cuando ya sabes qué buscas: tablas de
+propiedades, catálogos de fabricante, normas aplicadas, glosario y
+solución de problemas.
+</p>
+</section>
+
+<!-- ===== Visor 3D ===== -->
+<section class="section" id="ref-viewer">
+<h2>🎮 Visor 3D interactivo</h2>
+<p class="lead">
+Andamio en U de 3 plantas como referencia. Arrastra para girar,
+scroll para zoom, doble click reset.
+</p>
+
+<div class="viewer-section">
+<h3>Modelo de demostración — andamio en U</h3>
+<p class="desc">
+Polilínea 4 puntos (0,0)→(6,0)→(6,4)→(0,4) · 3 plantas × 2 m
+</p>
+<div class="viewer-canvas" id="viewer3d"></div>
+<div class="viewer-controls">
+<button class="btn" onclick="setView('iso')">Vista isométrica</button>
+<button class="btn" onclick="setView('front')">Alzado frontal</button>
+<button class="btn" onclick="setView('top')">Planta</button>
+<button class="btn" onclick="setView('side')">Alzado lateral</button>
+</div>
+</div>
+</section>
+
+<!-- ===== Comparativas visuales ===== -->
+<section class="section" id="ref-visual">
+<h2>🎬 Comparativas visuales</h2>
+<p class="lead">
+Cada propiedad del panel cambia el resultado de forma distinta. Mira las
+animaciones abajo para entender qué hace cada una sin necesidad de
+probarla en Blender.
+</p>
+
+<style>
+.compare-grid {
+  display: grid;
+  gap: 1.5em;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  margin: 1.5em 0;
+}
+.compare-card {
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.compare-card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-lg);
+}
+.compare-card img {
+  width: 100%; display: block;
+  background: #2a2a2a;
+}
+.compare-card .compare-info {
+  padding: 0.9em 1em;
+}
+.compare-card .compare-title {
+  font-weight: 700; color: var(--c-primary);
+  margin: 0 0 0.3em;
+}
+.compare-card .compare-desc {
+  font-size: 0.92em; color: var(--c-text-soft);
+  margin: 0;
+}
+.compare-card .compare-states {
+  display: inline-block;
+  background: var(--c-primary);
+  color: white;
+  font-size: 0.75em;
+  padding: 0.15em 0.6em;
+  border-radius: 999px;
+  margin-bottom: 0.4em;
+  font-family: monospace;
+}
+</style>
+
+<div class="compare-grid">
+
+<div class="compare-card">
+<img src="assets/anim_floors_grow.webp"
+     alt="Andamio creciendo de 1 a 5 plantas"
+     loading="lazy" width="900" height="600">
+<div class="compare-info">
+<span class="compare-states">1 → 2 → 3 → 4 → 5</span>
+<p class="compare-title">Plantas (<code>floor_count</code>)</p>
+<p class="compare-desc">Cuántos pisos horizontales tiene el andamio.
+Cada planta sube <code>floor_height</code> metros (típico: 2 m).</p>
+</div>
+</div>
+
+<div class="compare-card">
+<img src="assets/anim_depth_cycle.webp"
+     alt="Profundidad 0,640 → 0,732 → 1,090 m"
+     loading="lazy" width="900" height="540">
+<div class="compare-info">
+<span class="compare-states">0,640 → 0,732 → 1,090 m</span>
+<p class="compare-title">Profundidad (<code>scaffold_depth</code>)</p>
+<p class="compare-desc">Ancho del andamio perpendicular a la fachada.
+0,732 m es el más común (Layher 73, 2 bandejas de 0,32 m).</p>
+</div>
+</div>
+
+<div class="compare-card">
+<img src="assets/anim_catalog_cycle.webp"
+     alt="Catálogo UNIFORM, GENERIC, LAYHER"
+     loading="lazy" width="900" height="540">
+<div class="compare-info">
+<span class="compare-states">UNIFORM → GENERIC → LAYHER</span>
+<p class="compare-title">Catálogo de vanos (<code>bay_length_catalog</code>)</p>
+<p class="compare-desc"><strong>UNIFORM:</strong> divide el tramo en N
+vanos iguales. <strong>GENERIC:</strong> múltiplos de 50 cm.
+<strong>LAYHER:</strong> sólo longitudes Layher Allround estándar
+(0,73/1,09/1,40/1,57/2,07/2,57/3,07 m).</p>
+</div>
+</div>
+
+<div class="compare-card">
+<img src="assets/anim_pattern_cycle.webp"
+     alt="Patrón cruces FRONT, BACK, BOTH, ALT"
+     loading="lazy" width="900" height="540">
+<div class="compare-info">
+<span class="compare-states">FRONT → BACK → BOTH → ALT</span>
+<p class="compare-title">Patrón cruces (<code>brace_pattern</code>)</p>
+<p class="compare-desc">Dónde van las diagonales de arriostramiento.
+<strong>FRONT</strong> = sólo cara exterior (donde están los path_points).
+<strong>BACK</strong> = sólo cara opuesta (cerca de fachada).
+<strong>BOTH</strong> = ambas. <strong>ALT</strong> = alterna cada 4 vanos.</p>
+</div>
+</div>
+
+<div class="compare-card">
+<img src="assets/anim_subdivisions_zoom.webp"
+     alt="Sub-cruces NONE, HALF, QUARTER"
+     loading="lazy" width="900" height="700">
+<div class="compare-info">
+<span class="compare-states">NONE → HALF → QUARTER</span>
+<p class="compare-title">Subdivisión cruces (<code>brace_subdivision</code>)</p>
+<p class="compare-desc">Reduce la longitud individual de cada cruce.
+<strong>NONE</strong> = una diagonal larga (~2,9 m).
+<strong>HALF</strong> = zigzag a media altura (~2,3 m, 2× piezas).
+<strong>QUARTER</strong> = zigzag fino (~2,1 m, 4× piezas; sólo torres altas).</p>
+</div>
+</div>
+
+<div class="compare-card">
+<img src="assets/anim_decks_toggle.webp"
+     alt="Plataformas ON / OFF"
+     loading="lazy" width="900" height="540">
+<div class="compare-info">
+<span class="compare-states">ON ↔ OFF</span>
+<p class="compare-title">Plataformas (<code>add_decks</code>)</p>
+<p class="compare-desc">Una <strong>plataforma</strong> es el suelo de
+un piso, formado por varias <strong>bandejas</strong> paralelas. El
+toggle activa todas las plataformas; el ancho/nº de bandejas se
+configura debajo.</p>
+</div>
+</div>
+
+<div class="compare-card">
+<img src="assets/anim_braces_toggle.webp"
+     alt="Cruces ON / OFF"
+     loading="lazy" width="900" height="540">
+<div class="compare-info">
+<span class="compare-states">ON ↔ OFF</span>
+<p class="compare-title">Cruces (<code>add_braces</code>)</p>
+<p class="compare-desc">Las cruces (diagonales) estabilizan el andamio
+contra empujes laterales. Sin cruces, un andamio tiende a "venirse
+abajo" en el cálculo.</p>
+</div>
+</div>
+
+<div class="compare-card">
+<img src="assets/anim_ties_toggle.webp"
+     alt="Anclajes ON / OFF"
+     loading="lazy" width="900" height="540">
+<div class="compare-info">
+<span class="compare-states">ON ↔ OFF</span>
+<p class="compare-title">Anclajes a fachada (<code>add_ties</code>)</p>
+<p class="compare-desc">Tubos rojos que conectan el andamio a la
+fachada. <strong>EN 12811-2</strong> los exige cuando la altura supera
+8 m. Su densidad mínima: 1 anclaje cada 4 m² de fachada.</p>
+</div>
+</div>
+
+</div>
+
+<div class="card tip">
+<p class="card-title">💡 Glosario visual</p>
+Cada animación equivale a girar una sola perilla del panel. Si no
+recuerdas qué hace una propiedad, vuelve aquí y compara los estados
+"antes / después".
+</div>
+</section>
+
+
+<!-- ===== Tour del panel ===== -->
+<section class="section" id="ref-panel">
+<h2>Tour del panel</h2>
+<p class="lead">
+El addon añade dos paneles a la pestaña <strong>Andamios</strong> de la
+barra lateral del 3D Viewport.
+</p>
+
+<div class="fig-row" style="grid-template-columns: 1fr 1fr;">
+<div>
+<div class="panel-mockup">
+<div class="panel-title">▼ Andamios trayectoria</div>
+<div class="row"><span class="label">Trayectoria (lista)</span></div>
+<div class="row"><span class="label">Catálogo</span><span class="value">LAYHER</span></div>
+<div class="row"><span class="label">Profundidad</span><span class="value">0.732 m</span></div>
+<div class="row"><span class="label">Plantas</span><span class="value">2</span></div>
+<div class="row"><span class="toggle on"></span><span class="label">Plataformas</span></div>
+<div class="row"><span class="toggle on"></span><span class="label">Barandillas</span></div>
+<div class="row"><span class="toggle on"></span><span class="label">Cruces</span></div>
+<div class="row"><span class="toggle"></span><span class="label">Anclajes</span></div>
+<div class="button primary">⟳ Generar / Actualizar</div>
+</div>
+<p style="text-align: center; color: var(--c-text-soft);">Geometría</p>
+</div>
+<div>
+<div class="panel-mockup">
+<div class="panel-title">▼ Cálculo estructural</div>
+<div class="row"><span class="toggle on"></span><span class="label">Servicio (Q)</span></div>
+<div class="row"><span class="label">Clase</span><span class="value">Q3</span></div>
+<div class="row"><span class="toggle on"></span><span class="label">Viento (W)</span></div>
+<div class="row"><span class="toggle on"></span><span class="label">Imperfecciones (I)</span></div>
+<div class="button">✓ Comprobar modelo</div>
+<div class="button primary">▶ Ejecutar cálculo</div>
+<div class="button">📐 Mostrar deformada</div>
+<div class="button">📄 Exportar plano CAD</div>
+</div>
+<p style="text-align: center; color: var(--c-text-soft);">Cálculo y export</p>
+</div>
+</div>
+</section>
+
+<!-- ===== Dimensiones ===== -->
+<section class="section" id="ref-dims">
+<h2>Dimensiones — propiedades</h2>
+
+<h3>Catálogo de longitudes (<code>bay_length_catalog</code>)</h3>
+<table>
+<thead><tr><th>Modo</th><th>Comportamiento</th></tr></thead>
+<tbody>
+<tr><td><strong>GENERIC</strong></td><td>Combina piezas 0,5 / 1 / 1,5 / 2 / 3 / 4 m + compensador</td></tr>
+<tr><td><strong>LAYHER</strong></td><td>Sólo Layher Allround: 0,73 / 1,09 / 1,40 / 1,57 / 2,07 / 2,57 / 3,07 m</td></tr>
+<tr><td><strong>UNIFORM</strong></td><td>N bays iguales (objetivo <code>section_length</code>)</td></tr>
+</tbody>
+</table>
+
+<h3>Profundidad (<code>scaffold_depth</code>)</h3>
+<table>
+<tbody>
+<tr><td><strong>0,732 m</strong></td><td>Layher 73 (más común, 2 bandejas de 0,32 m)</td></tr>
+<tr><td><strong>1,090 m</strong></td><td>Layher 109 (3 bandejas)</td></tr>
+<tr><td><strong>0,640 m</strong></td><td>Estrecho (acceso restringido)</td></tr>
+</tbody>
+</table>
+</section>
+
+<!-- ===== Cargas ===== -->
+<section class="section" id="ref-cargas">
+<h2>Cargas y combinación</h2>
+
+<h3>Clases de servicio (Q) — EN 12811-1 §6.2.2</h3>
+<table>
+<thead><tr><th>Clase</th><th>Uso típico</th><th>Carga distribuida</th></tr></thead>
+<tbody>
+<tr><td>Q1</td><td>Inspección</td><td>~75 kg/m²</td></tr>
+<tr><td>Q2</td><td>Uso ligero</td><td>~150 kg/m²</td></tr>
+<tr><td><strong>Q3</strong></td><td><strong>Uso general (≈4 trabajadores)</strong></td><td><strong>~200 kg/m²</strong></td></tr>
+<tr><td>Q4</td><td>Trabajos pesados</td><td>~300 kg/m²</td></tr>
+<tr><td>Q5</td><td>Almacén ligero</td><td>~450 kg/m²</td></tr>
+<tr><td>Q6</td><td>Almacén pesado</td><td>~600 kg/m²</td></tr>
+</tbody>
+</table>
+
+<h3>Zona de viento — CTE / EN 1991-1-4</h3>
+<table>
+<thead><tr><th>Zona</th><th>v_b</th><th>Uso típico</th></tr></thead>
+<tbody>
+<tr><td><strong>A</strong></td><td>26 m/s</td><td>Interior, costa Mediterráneo norte</td></tr>
+<tr><td>B</td><td>27 m/s</td><td>Costa Mediterráneo sur, valles</td></tr>
+<tr><td>C</td><td>29 m/s</td><td>Costa Atlántica, montaña</td></tr>
+</tbody>
+</table>
+
+<h3>Combinaciones (qué le pides al cálculo)</h3>
+<p>
+El dropdown <strong>"Caso a comprobar"</strong> determina qué combinación
+de cargas verifica el solver. Los nombres del panel ya son descriptivos
+(no aparecen códigos crípticos como ULS_LeadL):
+</p>
+<table>
+<thead><tr><th>Caso del panel</th><th>Cuándo usarlo</th></tr></thead>
+<tbody>
+<tr><td><strong>Resistencia — uso dominante</strong></td>
+    <td>Caso típico: andamio de mantenimiento en altura razonable. Comprueba la rotura cuando el peso de trabajo es lo crítico.</td></tr>
+<tr><td><strong>Resistencia — viento dominante</strong></td>
+    <td>Andamios altos o expuestos. El viento es lo que más exige.</td></tr>
+<tr><td><strong>Resistencia — levantamiento por viento</strong></td>
+    <td>Verifica que el viento no levanta la estructura (carga de uso minorada).</td></tr>
+<tr><td><strong>Servicio — deformación característica</strong></td>
+    <td>Comprueba la deflexión máxima (EN 12811-1 §10.3, δ ≤ L/100).</td></tr>
+</tbody>
+</table>
+</section>
+
+<!-- ===== CAD ===== -->
+<section class="section" id="ref-cad">
+<h2>Plano CAD multihoja</h2>
+<p>
+Cumple UNE-EN ISO 129-1. Para 1 tramo: 1 hoja con alzado + planta + iso.
+Para ≥ 2 tramos: 1 hoja overview + N hojas tramo (alzado local de cada
+tramo recto, sin aplastamiento).
+</p>
+
+<div class="fig-row">
+<figure>
+<img src="assets/ex3_ushape_iso.png" alt="Andamio U vista iso" loading="lazy" width="600" height="375">
+<figcaption>Modelo</figcaption>
+</figure>
+<figure>
+<img src="assets/ex3_ushape_top.png" alt="Andamio U vista en planta" loading="lazy" width="600" height="375">
+<figcaption>Vista en planta para overview</figcaption>
+</figure>
+</div>
+</section>
+
+<!-- ===== Export ===== -->
+<section class="section" id="ref-export">
+<h2>Exportar BOM e informe HTML</h2>
+<table>
+<thead><tr><th>Tipo</th><th>Botón</th><th>Salida</th></tr></thead>
+<tbody>
+<tr><td>BOM</td><td>Exportar BOM HTML</td><td>HTML autocontenido con resumen, tabla por categoría, fotos representativas, glosario</td></tr>
+<tr><td>Plano CAD</td><td>Exportar plano CAD (HTML)</td><td>1 a N+1 hojas A3 con cotas normativas + cajetín</td></tr>
+<tr><td>Informe</td><td>Exportar informe HTML</td><td>Resumen ejecutivo + 5 vistas + tarjetas con foto y diagnóstico narrativo</td></tr>
+</tbody>
+</table>
+</section>
+
+
+<!-- ===== HELP: Solución por síntomas ===== -->
+<section class="section" id="help-symptoms">
+<h2>Solución de problemas — orientado a síntomas</h2>
+<p class="lead">
+Busca el síntoma observable que más se parezca a tu caso.
+</p>
+
+<div class="card">
+<p class="card-title"><span aria-hidden="true">🔴</span> El addon no aparece en el panel <kbd>N</kbd> tras instalar</p>
+<p><strong>Causa probable:</strong> el addon se instaló pero no se activó, o
+hay error en la consola al cargar.</p>
+<ol>
+<li>Edit → Preferences → Add-ons → busca "Andamios trayectoria"</li>
+<li>Marca la casilla. Si hay un error en rojo, abre Window → Toggle System Console</li>
+<li>Reinstala asegurándote de seleccionar <code>andamios_addon.py</code>
+   (no la carpeta entera ni un .zip)</li>
+</ol>
+</div>
+
+<div class="card">
+<p class="card-title"><span aria-hidden="true">🔴</span> Generé el andamio pero no veo nada en el viewport</p>
+<p><strong>Causa probable:</strong> los empties están todos en el mismo
+sitio, o la cámara no enfoca la zona correcta.</p>
+<ol>
+<li>Pulsa <kbd>Home</kbd> con el ratón sobre el viewport — la cámara enmarca todo</li>
+<li>Verifica que los empties tienen coordenadas distintas
+   (el error <code>"Los puntos i y j coinciden"</code> sale en consola si están pegados)</li>
+<li>Mira la colección <strong>Scaffold</strong> en el outliner: si
+   contiene objetos, el andamio se generó correctamente</li>
+</ol>
+</div>
+
+<div class="card">
+<p class="card-title"><span aria-hidden="true">🔴</span> El cálculo tarda más de un minuto y parece colgado</p>
+<p><strong>Causa probable:</strong> modelo grande (&gt; 1000 miembros) o
+PyNiteFEA no está bien instalado.</p>
+<ol>
+<li>Window → Toggle System Console — debería mostrar progreso del solver</li>
+<li>Si aparece <code>ModuleNotFoundError: No module named 'PyNite'</code>,
+   instala con
+   <div class="code-wrap"><pre>/snap/blender/current/5.1/python/bin/python3.13 -m pip install --user PyNiteFEA</pre></div>
+</li>
+<li>Si el modelo tiene cientos de plantas / cientos de bays, reduce
+   <code>floor_count</code> o desactiva <code>add_horizontal_braces</code>
+   para acelerar</li>
+</ol>
+</div>
+
+<div class="card">
+<p class="card-title"><span aria-hidden="true">🔴</span> <code>util max &gt; 1</code> y no sé cómo bajarlo</p>
+<p><strong>Causa probable:</strong> el andamio no resiste las cargas
+configuradas.</p>
+<ol>
+<li>Mira la <strong>lista de elementos críticos</strong> en sub-panel
+   Resultados — clic en cada fila enseña el diagnóstico narrativo</li>
+<li>Pulsa <strong>Auto-corregir</strong> en sub-panel Auto-corrección.
+   El algoritmo prueba cambios (cruces, postes segmentados, bays más cortos)
+   hasta lograr cumplimiento</li>
+<li>Si aún no cumple: añade anclajes (sub-panel del addon principal),
+   sube la clase de poste a Ø60×3,2 / S355, o reduce la clase de servicio</li>
+</ol>
+</div>
+
+<div class="card">
+<p class="card-title"><span aria-hidden="true">🔴</span> Exporté el plano CAD pero las cotas se solapan o son ilegibles</p>
+<p><strong>Causa probable:</strong> el bbox del tramo no encaja con la
+escala normalizada elegida.</p>
+<ol>
+<li>Verifica que activas <code>fit_to_canvas</code> en las hojas tramo
+   (es default desde v0.7.10) — si no, las hojas tramo usan escala
+   óptima entera (1:25, 1:33...) en lugar de las normalizadas</li>
+<li>Si usaste una versión anterior, regenera con la última</li>
+<li>Para el problema de "1973 mm" en lugar de "2070 mm", revisa
+   <code>prompt_acotacion_andamios.md</code> §4 (snap modular)</li>
+</ol>
+</div>
+
+<div class="card">
+<p class="card-title"><span aria-hidden="true">🔴</span> Blender se cerró durante el cálculo</p>
+<p><strong>Causa probable:</strong> segfault del solver o de la
+visualización 3D — el addon registra automáticamente las últimas
+operaciones.</p>
+<ol>
+<li>Reabre Blender</li>
+<li>Panel Andamios → sección <strong>Diagnóstico</strong> →
+   pulsa <strong>Exportar informe</strong></li>
+<li>Guarda el <code>.txt</code> (no en <code>/tmp</code> si usas Snap Firefox)
+   — contiene las últimas 100 operaciones con timestamps + traza C/Python</li>
+<li>Comparte el fichero para que se diagnostique la causa</li>
+</ol>
+</div>
+
+<div class="card">
+<p class="card-title"><span aria-hidden="true">🔴</span> Las plataformas dejan un hueco grande contra los postes</p>
+<p><strong>Causa probable:</strong> el ancho de la profundidad no es
+múltiplo del ancho de las bandejas elegido.</p>
+<ol>
+<li>Pulsa <strong>Auto-cubrir bandejas</strong> (icono SHADERFX en panel
+   principal) — el addon prueba todas las combinaciones de anchos hasta
+   6 piezas y elige la que deja menos hueco</li>
+<li>Si la solución es uniforme, la aplica directamente</li>
+<li>Si es mixta, sólo la informa — aplícala manualmente cambiando
+   <code>deck_planks_count</code> y <code>deck_plank_width</code></li>
+</ol>
+</div>
+</section>
+
+<!-- ===== HELP: Códigos de error (subapartado) ===== -->
+<section class="section" id="help-codes">
+<h2>Códigos de error</h2>
+<p class="lead">
+Lista exhaustiva por código para quien busca un mensaje específico.
+</p>
+
+<table>
+<thead><tr><th>Código</th><th>Significado</th><th>Acción</th></tr></thead>
+<tbody>
+<tr><td><strong>E1</strong></td><td>Modelo sin barras estructurales</td><td>Genera el andamio antes de calcular</td></tr>
+<tr><td><strong>E11</strong></td><td>Polilínea con &lt; 2 puntos</td><td>Añade más empties a la lista de Trayectoria</td></tr>
+<tr><td><strong>E12</strong></td><td>Entradas de path con obj=None</td><td>Asigna un empty a cada fila o elimínala</td></tr>
+<tr><td><strong>E13</strong></td><td>Colección Scaffold vacía o ausente</td><td>Pulsa Generar / Actualizar</td></tr>
+<tr><td><strong>W1</strong></td><td>&lt; 4 postes en el modelo</td><td>Aviso (probablemente test); ignora si no es real</td></tr>
+<tr><td><strong>W2</strong></td><td>Barras de longitud &lt; 1 mm</td><td>Bug en geometría — reporta el caso</td></tr>
+<tr><td><strong>W3</strong></td><td>Sin soportes definidos</td><td>El pipeline empotrará la base automáticamente</td></tr>
+<tr><td><strong>W4</strong></td><td>Postes desconectados</td><td>Comprueba que los travesaños llegan a sus nodos</td></tr>
+<tr><td><strong>W10</strong></td><td>Altura &gt; 8 m sin anclajes</td><td>Activa <code>add_ties</code> (EN 12811-2)</td></tr>
+<tr><td><strong>W11</strong></td><td>Viento B/C sin anclajes</td><td>Activa anclajes — son críticos en estas zonas</td></tr>
+<tr><td><strong>W12</strong></td><td>Profundidad &lt; 600 mm</td><td>Las bandejas estándar EN 12811-1 no caben</td></tr>
+<tr><td><strong>W13</strong></td><td>Hueco perpendicular &gt; 25 mm</td><td>Pulsa Auto-cubrir o ajusta planks_count</td></tr>
+<tr><td><strong>W14</strong></td><td>floor_height fuera de [1,5; 2,5]</td><td>Revisa altura de planta</td></tr>
+</tbody>
+</table>
+</section>
+
+<!-- ===== Glosario ===== -->
+<section class="section" id="help-glossary">
+<h2>Glosario</h2>
+<table>
+<thead><tr><th>Término</th><th>Significado</th></tr></thead>
+<tbody>
+<tr><td><strong>Bay</strong></td><td>Vano entre dos postes consecutivos</td></tr>
+<tr><td><strong>Planta</strong></td><td>Nivel horizontal con bandeja para trabajar</td></tr>
+<tr><td><strong>Profundidad</strong></td><td>Ancho del andamio perpendicular a la fachada</td></tr>
+<tr><td><strong>Husillo</strong></td><td>Pie regulable bajo cada poste (jack)</td></tr>
+<tr><td><strong>Roseta</strong></td><td>Disco con agujeros para anclar travesaños y diagonales (Layher Allround)</td></tr>
+<tr><td><strong>Ledger</strong></td><td>Travesaño horizontal entre postes</td></tr>
+<tr><td><strong>Brace</strong></td><td>Diagonal de arriostramiento</td></tr>
+<tr><td><strong>Tie</strong></td><td>Anclaje a fachada</td></tr>
+<tr><td><strong>Toe board</strong></td><td>Rodapié de seguridad</td></tr>
+<tr><td><strong>Trapdoor</strong></td><td>Trampilla en plataforma para acceso vertical</td></tr>
+<tr><td><strong>Compensador</strong></td><td>Pieza singular de longitud no estándar al final del tramo</td></tr>
+<tr><td><strong>Bisectriz</strong></td><td>Línea que parte el ángulo de una esquina en dos partes iguales — define dónde va el poste de esquina</td></tr>
+<tr><td><strong>Polilínea</strong></td><td>Sucesión de puntos conectados que define el recorrido del andamio</td></tr>
+<tr><td><strong>CHS</strong></td><td>Circular Hollow Section (sección tubular hueca)</td></tr>
+<tr><td><strong>EN 12811-1</strong></td><td>Norma europea de andamios de servicio</td></tr>
+<tr><td><strong>EN 1993-1-1</strong></td><td>Eurocódigo 3 — diseño de estructuras de acero</td></tr>
+<tr><td><strong>EN 1991-1-4</strong></td><td>Eurocódigo 1 — acciones de viento</td></tr>
+<tr><td><strong>ULS</strong></td><td>Ultimate Limit State — Estado Límite Último</td></tr>
+<tr><td><strong>SLS</strong></td><td>Serviceability Limit State — Estado Límite de Servicio</td></tr>
+<tr><td><strong>Utilización</strong></td><td>M_Ed/M_Rd, fracción de la capacidad consumida (≤ 1 = OK)</td></tr>
+<tr><td><strong>K_φ</strong></td><td>Rigidez rotacional de la unión (Layher Allround ≈ 80 kN·m/rad)</td></tr>
+<tr><td><strong>L_cr</strong></td><td>Longitud crítica de pandeo</td></tr>
+<tr><td><strong>Q3</strong></td><td>Clase de servicio "uso general" — ~200 kg/m², 4 trabajadores</td></tr>
+</tbody>
+</table>
+</section>
+
+</div><!-- /mode-referencia -->
+
+</main>
+</div>
+
+<!-- ===== Footer ===== -->
+<footer class="site-footer">
+<div class="footer-inner">
+<div>
+<strong>Andamios addon</strong> · v0.7.12<br>
+<span class="meta">421 tests · Blender 5.1+ · MIT</span>
+</div>
+<div>
+<a href="../DEVELOPMENT.md">Changelog</a> ·
+<a href="../prompt_acotacion_andamios.md">Prompt acotación CAD</a> ·
+<a href="../prompt_tutorial_addon.md">Prompt tutorial</a>
+</div>
+<div class="meta">
+Generado con renders de Blender Workbench + Three.js
+</div>
+</div>
+</footer>
+
+<!-- ===== Search modal ===== -->
+<div class="search-modal" id="search-modal" role="dialog"
+     aria-modal="true" aria-label="Buscar en el tutorial">
+<div class="search-box">
+<input type="text" id="search-input" placeholder="Escribe para buscar… (Esc para cerrar)" aria-label="Buscar">
+<div class="search-results" id="search-results"></div>
+</div>
+</div>
+
+
+<!-- ===== Three.js viewer ===== -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "./assets/vendor/three/three.module.js",
+    "three/addons/": "./assets/vendor/three/addons/"
+  }
+}
+</script>
+<script type="module">
+let modelLoaded = false;
+let bbox = null;
+let camera, controls, scene;
+
+(async function () {
+  try {
+    const THREE = await import('three');
+    const { OrbitControls } = await import('three/addons/controls/OrbitControls.js');
+    const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
+
+    const container = document.getElementById('viewer3d');
+    if (!container) return;
+    const w = container.clientWidth, h = container.clientHeight;
+
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1e293b);
+
+    camera = new THREE.PerspectiveCamera(40, w / h, 0.1, 200);
+    camera.position.set(15, 10, 15);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(w, h);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    container.appendChild(renderer.domElement);
+
+    const ambient = new THREE.HemisphereLight(0xeeeeff, 0x556677, 0.7);
+    scene.add(ambient);
+    const dir = new THREE.DirectionalLight(0xffffff, 1.2);
+    dir.position.set(20, 30, 20);
+    scene.add(dir);
+
+    const grid = new THREE.GridHelper(30, 30, 0x4a5568, 0x2d3748);
+    grid.position.y = -0.05;
+    scene.add(grid);
+
+    controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.minDistance = 5;
+    controls.maxDistance = 50;
+
+    const loader = new GLTFLoader();
+    loader.load('assets/ex3_ushape.glb', (gltf) => {
+      scene.add(gltf.scene);
+      bbox = new THREE.Box3().setFromObject(gltf.scene);
+      const center = bbox.getCenter(new THREE.Vector3());
+      controls.target.copy(center);
+      modelLoaded = true;
+      window.setView('iso');
+    }, undefined, (err) => {
+      console.warn('GLB no disponible, mostrando fallback:', err);
+      showFallback();
+    });
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+      const w2 = container.clientWidth, h2 = container.clientHeight;
+      camera.aspect = w2 / h2;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w2, h2);
+    });
+
+    container.addEventListener('dblclick', () => window.setView('iso'));
+
+    window.setView = function(view) {
+      if (!bbox) return;
+      const center = bbox.getCenter(new THREE.Vector3());
+      const size = bbox.getSize(new THREE.Vector3());
+      const diag = Math.max(size.x, size.y, size.z) * 1.6;
+      let pos;
+      if (view === 'iso')   pos = new THREE.Vector3(diag, diag*0.7, diag);
+      else if (view === 'front') pos = new THREE.Vector3(0, size.y*0.5, diag*1.5);
+      else if (view === 'side')  pos = new THREE.Vector3(diag*1.5, size.y*0.5, 0);
+      else if (view === 'top')   pos = new THREE.Vector3(0, diag*1.4, 0.001);
+      pos.add(center);
+      camera.position.copy(pos);
+      controls.target.copy(center);
+      controls.update();
+    };
+  } catch (err) {
+    console.warn('Three.js no se pudo cargar:', err);
+    showFallback();
+  }
+
+  function showFallback() {
+    const container = document.getElementById('viewer3d');
+    if (!container) return;
+    container.innerHTML =
+      '<div class="fallback">' +
+        '<img src="assets/anim_orbit_ushape.webp" alt="Andamio U animado orbitando">' +
+      '</div>';
+    // Stub setView para que los botones no rompan
+    window.setView = function() {};
+  }
+})();
+</script>
+
+<!-- ===== UI scripts: tabs, sidebar, copy buttons, search, scroll ===== -->
+<script>
+(function () {
+  // ---- Tabs ----------------------------------------------------------
+  const tabs = document.querySelectorAll('.mode-tab');
+  const modes = {
+    quickstart: document.getElementById('mode-quickstart'),
+    recetas:    document.getElementById('mode-recetas'),
+    referencia: document.getElementById('mode-referencia'),
+  };
+  const sidebars = {
+    quickstart: document.getElementById('sidebar-quickstart'),
+    recetas:    document.getElementById('sidebar-recetas'),
+    referencia: document.getElementById('sidebar-referencia'),
+  };
+  function showMode(name) {
+    tabs.forEach(t => t.setAttribute('aria-selected', t.dataset.mode === name));
+    Object.entries(modes).forEach(([k, el]) => el.hidden = k !== name);
+    Object.entries(sidebars).forEach(([k, el]) => el.hidden = k !== name);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+  tabs.forEach(t => t.addEventListener('click', () => showMode(t.dataset.mode)));
+
+  // Pathways y otros enlaces con data-go-mode saltan al modo correspondiente
+  document.querySelectorAll('[data-go-mode]').forEach(p => {
+    p.addEventListener('click', (e) => {
+      const mode = p.dataset.goMode;
+      if (mode) {
+        e.preventDefault();
+        showMode(mode);
+        const target = p.getAttribute('href');
+        if (target && target.startsWith('#')) {
+          setTimeout(() => {
+            const el = document.querySelector(target);
+            if (el) el.scrollIntoView({ behavior: 'smooth' });
+          }, 150);
+        }
+      }
+    });
+  });
+
+  // ---- Hamburger / sidebar móvil -------------------------------------
+  const hamburger = document.getElementById('hamburger');
+  const sidebar = document.getElementById('sidebar');
+  hamburger.addEventListener('click', () => sidebar.classList.toggle('open'));
+  // Cerrar al click en un enlace
+  sidebar.querySelectorAll('a').forEach(a =>
+    a.addEventListener('click', () => sidebar.classList.remove('open'))
+  );
+
+  // ---- Copy buttons en cada <pre> ------------------------------------
+  document.querySelectorAll('.code-wrap').forEach(wrap => {
+    const pre = wrap.querySelector('pre');
+    if (!pre) return;
+    const btn = document.createElement('button');
+    btn.className = 'copy-btn';
+    btn.textContent = 'Copiar';
+    btn.setAttribute('aria-label', 'Copiar código al portapapeles');
+    btn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(pre.textContent.trim());
+        btn.textContent = '✓ Copiado';
+        btn.classList.add('copied');
+        setTimeout(() => {
+          btn.textContent = 'Copiar';
+          btn.classList.remove('copied');
+        }, 1200);
+      } catch (e) {
+        btn.textContent = 'Error';
+      }
+    });
+    wrap.appendChild(btn);
+  });
+  // Auto-wrap <pre> que no tienen .code-wrap
+  document.querySelectorAll('pre').forEach(pre => {
+    if (pre.parentElement.classList.contains('code-wrap')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'code-wrap';
+    pre.parentNode.insertBefore(wrap, pre);
+    wrap.appendChild(pre);
+    const btn = document.createElement('button');
+    btn.className = 'copy-btn';
+    btn.textContent = 'Copiar';
+    btn.setAttribute('aria-label', 'Copiar código');
+    btn.addEventListener('click', async () => {
+      await navigator.clipboard.writeText(pre.textContent.trim());
+      btn.textContent = '✓ Copiado';
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.textContent = 'Copiar';
+        btn.classList.remove('copied');
+      }, 1200);
+    });
+    wrap.appendChild(btn);
+  });
+
+  // ---- Sidebar progress + active link --------------------------------
+  const progressBar = document.getElementById('toc-progress');
+  function update() {
+    const scrolled = window.scrollY;
+    const totalH = document.documentElement.scrollHeight - window.innerHeight;
+    progressBar.style.transform = `scaleX(${Math.min(1, scrolled / totalH)})`;
+    // Activar el enlace de la sección visible
+    const activeMode = Object.keys(modes).find(k => !modes[k].hidden);
+    if (!activeMode) return;
+    const activeSidebar = sidebars[activeMode];
+    if (!activeSidebar) return;
+    const links = activeSidebar.querySelectorAll('a[href^="#"]');
+    const sections = Array.from(links)
+      .map(a => document.querySelector(a.getAttribute('href')))
+      .filter(Boolean);
+    const fromTop = scrolled + 120;
+    let active = sections[0];
+    for (const sec of sections) {
+      if (sec && sec.offsetTop <= fromTop) active = sec;
+    }
+    if (active) {
+      links.forEach(a => a.classList.toggle(
+        'active', a.getAttribute('href') === '#' + active.id,
+      ));
+    }
+  }
+  window.addEventListener('scroll', update, { passive: true });
+  update();
+
+  // ---- Search index --------------------------------------------------
+  const index = [];
+  function buildIndex() {
+    document.querySelectorAll('.section').forEach(sec => {
+      const mode = sec.closest('[id^="mode-"]');
+      const modeName = mode ? mode.id.replace('mode-', '') : 'general';
+      const h2 = sec.querySelector('h2');
+      const lead = sec.querySelector('.lead, p');
+      if (!h2) return;
+      index.push({
+        id: sec.id,
+        mode: modeName,
+        title: h2.textContent.trim(),
+        snippet: lead ? lead.textContent.trim().slice(0, 140) : '',
+      });
+      sec.querySelectorAll('h3').forEach(h3 => {
+        index.push({
+          id: sec.id,
+          mode: modeName,
+          title: h3.textContent.trim(),
+          snippet: '↳ ' + h2.textContent.trim(),
+        });
+      });
+    });
+    // Glosario (term → definition)
+    document.querySelectorAll('#help-glossary tbody tr').forEach(tr => {
+      const cells = tr.querySelectorAll('td');
+      if (cells.length >= 2) {
+        index.push({
+          id: 'help-glossary',
+          mode: 'referencia',
+          title: cells[0].textContent.trim(),
+          snippet: cells[1].textContent.trim().slice(0, 140),
+        });
+      }
+    });
+  }
+  buildIndex();
+
+  // ---- Search modal --------------------------------------------------
+  const modal = document.getElementById('search-modal');
+  const trigger = document.getElementById('search-trigger');
+  const input = document.getElementById('search-input');
+  const results = document.getElementById('search-results');
+  let activeIdx = -1;
+
+  function openSearch() {
+    modal.classList.add('open');
+    input.value = '';
+    renderResults('');
+    setTimeout(() => input.focus(), 50);
+  }
+  function closeSearch() {
+    modal.classList.remove('open');
+    activeIdx = -1;
+  }
+  function highlight(text, q) {
+    if (!q) return text;
+    const re = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'ig');
+    return text.replace(re, '<mark>$1</mark>');
+  }
+  function renderResults(q) {
+    activeIdx = -1;
+    if (!q) {
+      results.innerHTML =
+        '<div class="search-empty">Escribe para buscar (h2, h3, glosario…)</div>';
+      return;
+    }
+    const ql = q.toLowerCase();
+    const hits = index.filter(i =>
+      i.title.toLowerCase().includes(ql) ||
+      i.snippet.toLowerCase().includes(ql)
+    ).slice(0, 12);
+    if (!hits.length) {
+      results.innerHTML = '<div class="search-empty">Sin resultados</div>';
+      return;
+    }
+    results.innerHTML = hits.map((h, i) =>
+      `<div class="search-result" data-idx="${i}" data-id="${h.id}" data-mode="${h.mode}">
+        <div class="res-section">${h.mode}</div>
+        <div class="res-title">${highlight(h.title, q)}</div>
+        <div class="res-snippet">${highlight(h.snippet, q)}</div>
+      </div>`
+    ).join('');
+    results.querySelectorAll('.search-result').forEach(el => {
+      el.addEventListener('click', () => goToResult(el));
+    });
+  }
+  function goToResult(el) {
+    const id = el.dataset.id;
+    const mode = el.dataset.mode;
+    if (mode && modes[mode]) showMode(mode);
+    setTimeout(() => {
+      const t = document.getElementById(id);
+      if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+    closeSearch();
+  }
+
+  trigger.addEventListener('click', openSearch);
+  input.addEventListener('input', e => renderResults(e.target.value));
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      openSearch();
+    } else if (e.key === 'Escape' && modal.classList.contains('open')) {
+      closeSearch();
+    } else if (modal.classList.contains('open')) {
+      const items = results.querySelectorAll('.search-result');
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        activeIdx = Math.min(activeIdx + 1, items.length - 1);
+        items.forEach((el, i) => el.classList.toggle('active', i === activeIdx));
+        if (items[activeIdx]) items[activeIdx].scrollIntoView({block:'nearest'});
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        activeIdx = Math.max(activeIdx - 1, 0);
+        items.forEach((el, i) => el.classList.toggle('active', i === activeIdx));
+        if (items[activeIdx]) items[activeIdx].scrollIntoView({block:'nearest'});
+      } else if (e.key === 'Enter') {
+        if (activeIdx >= 0 && items[activeIdx]) goToResult(items[activeIdx]);
+      }
+    }
+  });
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeSearch();
+  });
+})();
+</script>
+
+</body>
+</html>

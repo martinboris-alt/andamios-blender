@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.pytest_cache/
+.venv/
+venv/
+
+# Backups y temporales
+*.bak.*
+*.bak
+*~
+.DS_Store
+Thumbs.db
+
+# Claude Code config local (NO se sube)
+.claude/
+
+# Notas / prompts privados del autor
+prompt_*.md
+
+# Copias temporales de otros proyectos durante el desarrollo
+mcp-1.0.0/
+mcp-1.0.0.zip
+mechanicalpro-master/
+mechanicalpro-master.zip
+
+# Renders y assets temporales del tutorial (test_*)
+tutorial/assets/_promo_test_*.png
+tutorial/assets/_test_render.png
+tutorial/test_render.py
+tutorial/test_promo.py
+tutorial/make_promo.py
+tutorial/build_promo.py
+
+# Logs / outputs locales
+*.log
+/tmp/
