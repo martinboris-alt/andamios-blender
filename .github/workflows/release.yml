@@ -1,0 +1,30 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build andamios.zip
+        run: python build_release.py
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: andamios.zip
+          generate_release_notes: true
+
+      - name: Trigger Vercel redeploy
+        if: ${{ secrets.VERCEL_DEPLOY_HOOK != '' }}
+        run: curl -X POST "${{ secrets.VERCEL_DEPLOY_HOOK }}"

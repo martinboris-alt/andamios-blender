@@ -47,16 +47,14 @@ Después puedes:
 
 ### Pasos
 
-1. Descarga **`andamios_addon.py`**, **`tutorial_guide.py`** y la carpeta
-   **`calc/`** desde la
-   [última release](https://github.com/martinboris-alt/andamios-blender/releases/latest)
-   (o clona este repo).
+1. Descarga **`andamios.zip`** desde la
+   [última release](https://github.com/martinboris-alt/andamios-blender/releases/latest).
 
 2. En Blender:
    ```
    Edit → Preferences → Add-ons → Install…
    ```
-   Selecciona `andamios_addon.py` y marca la casilla
+   Selecciona `andamios.zip` y marca la casilla
    **"Andamios trayectoria"** para activarlo.
 
 3. Para el cálculo estructural, instala PyNiteFEA con el Python embebido
@@ -69,6 +67,9 @@ Después puedes:
 
 4. Verifica que carga: pulsa **`N`** en el viewport 3D y aparecerá la
    pestaña **"Andamios"** en la barra lateral.
+
+> **Nota para desarrolladores:** si trabajas desde el repositorio, genera el
+> zip con `python build_release.py` antes de instalarlo en Blender.
 
 ## Tu primer andamio en 5 pasos
 

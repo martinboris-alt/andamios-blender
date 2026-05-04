@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Andamios trayectoria",
     "author": "mjuica",
-    "version": (0, 7, 12),
+    "version": (0, 7, 13),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Andamios",
     "description": "Genera andamios paramétricos a lo largo de una polilínea (con esquinas) + cálculo estructural FEM",
