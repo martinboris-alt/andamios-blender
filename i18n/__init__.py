@@ -3,14 +3,14 @@
 El addon registra un diccionario de traducciones con
 ``bpy.app.translations.register``. Los msgid son los strings españoles
 que aparecen en el código fuente (name=, description=, bl_label, items=,
-text=, etc.); el español es por tanto el idioma "fuente" y el resto
-(en_US, de_DE, fr_FR, it_IT, pt_BR, pl_PL) son traducciones.
+text=, etc.); el español es por tanto el idioma "fuente". El único
+idioma traducido es ``en_US``.
 
 Para usuarios cuyo Blender está en español (o sin idioma instalado), el
-fallback es el msgid → ven el texto original. Para los demás, Blender
-busca la entrada ``(None, msgid)`` en el dict del idioma activo y, si
-existe, la sustituye automáticamente en cualquier ``layout.label``,
-``bl_label``, ``description``, etc.
+fallback es el msgid → ven el texto original. Para usuarios con Blender
+en inglés, Blender busca la entrada ``(None, msgid)`` en el dict
+``en_US`` y, si existe, la sustituye automáticamente en cualquier
+``layout.label``, ``bl_label``, ``description``, etc.
 
 Uso desde otros módulos del addon:
 

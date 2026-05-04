@@ -710,26 +710,14 @@ EN: dict = {
         "Select a row from the list first.",
 }
 
-# ----------------------------------------------------------------------
-# Idiomas pendientes — fallback al msgid (español) hasta traducir.
-# Para añadir traducción: copiar entrada de EN al dict del idioma y
-# sustituir el msgstr por la traducción correspondiente.
-# ----------------------------------------------------------------------
-DE: dict = {}
-FR: dict = {}
-IT: dict = {}
-PT_BR: dict = {}
-PL: dict = {}
-
 
 # ----------------------------------------------------------------------
 # Tabla pública consumida por bpy.app.translations.register
+#
+# Sólo se registra inglés. Para usuarios con Blender en español el
+# msgid es ya el texto fuente y no hace falta entrada — Blender muestra
+# el msgid directamente.
 # ----------------------------------------------------------------------
 TRANSLATIONS = {
     "en_US": EN,
-    "de_DE": DE,
-    "fr_FR": FR,
-    "it_IT": IT,
-    "pt_BR": PT_BR,
-    "pl_PL": PL,
 }
