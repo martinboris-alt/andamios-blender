@@ -41,6 +41,7 @@ from typing import Optional
 import bpy
 import blf
 import gpu
+from bpy.app.translations import pgettext_iface as iface_
 from bpy.types import Operator, Panel
 from gpu_extras.batch import batch_for_shader
 
@@ -399,12 +400,12 @@ def _draw_overlay() -> None:
 
     pad = int(28 * s)
     # Título — base 24 pt
-    _draw_text(info["title"],
+    _draw_text(iface_(info["title"]),
                 box_x + pad, int(box_y + box_h - 44 * s),
                 size=int(24 * s), color=COLOR_TITLE)
 
     # Instrucción — base 17 pt, con wrap
-    instr_lines = _wrap_text(info["instr"], max_chars=70)
+    instr_lines = _wrap_text(iface_(info["instr"]), max_chars=70)
     y_cur = int(box_y + box_h - 78 * s)
     line_h_instr = int(26 * s)
     for line in instr_lines:
@@ -414,7 +415,7 @@ def _draw_overlay() -> None:
 
     # Subtexto — base 14 pt
     if info.get("subtext"):
-        sub_lines = _wrap_text(info["subtext"], max_chars=78)
+        sub_lines = _wrap_text(iface_(info["subtext"]), max_chars=78)
         y_cur -= int(8 * s)
         line_h_sub = int(22 * s)
         for line in sub_lines:
@@ -423,7 +424,7 @@ def _draw_overlay() -> None:
             y_cur -= line_h_sub
 
     # Footer con shortcuts — base 12 pt
-    _draw_text("ESC para salir · ▶ Siguiente en el panel lateral para avanzar",
+    _draw_text(iface_("ESC para salir · ▶ Siguiente en el panel lateral para avanzar"),
                 box_x + pad, int(box_y + 16 * s),
                 size=int(12 * s), color=(0.5, 0.6, 0.75, 0.85))
 
@@ -471,7 +472,8 @@ def progress_label() -> Optional[str]:
     info = STEP_INFO.get(TutorialState.step, {})
     n = info.get("n", 0)
     total = info.get("total", 5)
-    return f"Paso {n}/{total}: {info.get('title', '').split('—')[0].strip()}"
+    title_short = iface_(info.get("title", "")).split("—")[0].strip()
+    return iface_("Paso %d/%d: %s") % (n, total, title_short)
 
 
 # ---------------------------------------------------------------------------
@@ -493,7 +495,7 @@ class ANDAMIOS_OT_tutorial_start(Operator):
 
     def invoke(self, context, event):
         if TutorialState.active:
-            self.report({'INFO'}, "El tutorial ya está activo")
+            self.report({'INFO'}, iface_("El tutorial ya está activo"))
             return {'CANCELLED'}
 
         TutorialState.active = True
@@ -623,35 +625,35 @@ class ANDAMIOS_PT_tutorial(Panel):
             col = layout.column(align=True)
             col.scale_y = 1.4
             col.operator("andamios.tutorial_start",
-                          text="▶ Empezar tutorial",
+                          text=iface_("▶ Empezar tutorial"),
                           icon='PLAY')
             col.scale_y = 1.0
-            col.label(text="Te guía a crear tu primer andamio.",
+            col.label(text=iface_("Te guía a crear tu primer andamio."),
                        icon='INFO')
-            col.label(text="5 pasos · 5 minutos.")
+            col.label(text=iface_("5 pasos · 5 minutos."))
         else:
             info = STEP_INFO.get(TutorialState.step, {})
             n = info.get("n", 0)
             total = info.get("total", 5)
             box = layout.box()
-            box.label(text=f"Paso {n} de {total}", icon='LIGHT_SUN')
+            box.label(text=iface_("Paso %d de %d") % (n, total), icon='LIGHT_SUN')
             # Título corto (sin emoji)
-            title = info.get("title", "")
+            title = iface_(info.get("title", ""))
             if "—" in title:
                 title = title.split("—", 1)[1].strip()
             box.label(text=title)
             # Texto envuelto
-            for line in _wrap_text(info.get("instr", ""), max_chars=32):
+            for line in _wrap_text(iface_(info.get("instr", "")), max_chars=32):
                 box.label(text=line)
             # Botones de control
             row = layout.row(align=True)
             row.scale_y = 1.2
             if TutorialState.step == STEP_DONE:
                 row.operator("andamios.tutorial_skip",
-                             text="✓ Cerrar", icon='CHECKMARK')
+                             text=iface_("✓ Cerrar"), icon='CHECKMARK')
             else:
                 row.operator("andamios.tutorial_next",
-                             text="Siguiente ▶", icon='FORWARD')
+                             text=iface_("Siguiente ▶"), icon='FORWARD')
                 row.operator("andamios.tutorial_skip",
                              text="", icon='X')
 

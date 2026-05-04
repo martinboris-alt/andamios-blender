@@ -368,6 +368,18 @@ figcaption {
 .viewer-controls {
   display: flex; gap: 0.5em; margin-top: 1em; flex-wrap: wrap;
 }
+.viewer-tooltip {
+  position: absolute; pointer-events: none;
+  background: rgba(15, 23, 42, 0.95);
+  color: white; padding: 0.4em 0.85em;
+  border-radius: 6px; font-size: 0.95em; font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  opacity: 0; transition: opacity 0.12s; z-index: 5;
+  white-space: nowrap;
+}
+.viewer-hint {
+  color: #cbd5e1; margin: 0.6em 0 0; font-size: 0.9em; text-align: center;
+}
 .btn {
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.2);
@@ -1260,6 +1272,7 @@ scroll para zoom, doble click reset.
 Polilínea 4 puntos (0,0)→(6,0)→(6,4)→(0,4) · 3 plantas × 2 m
 </p>
 <div class="viewer-canvas" id="viewer3d"></div>
+<p class="viewer-hint">💡 Pasa el ratón sobre las piezas para ver cómo se llaman</p>
 <div class="viewer-controls">
 <button class="btn" onclick="setView('iso')">Vista isométrica</button>
 <button class="btn" onclick="setView('front')">Alzado frontal</button>
@@ -1853,6 +1866,52 @@ let camera, controls, scene;
     }, undefined, (err) => {
       console.warn('GLB no disponible, mostrando fallback:', err);
       showFallback();
+    });
+
+    // Tooltip on hover: identifica la categoría de la pieza bajo el cursor
+    const CATEGORY_BY_GROUP = {
+      'Andamio_Postes':      'Poste',
+      'Andamio_Plataformas': 'Bandeja',
+      'Andamio_Cruces':      'Cruz',
+      'Andamio_Escaleras':   'Escalera',
+      'Andamio_Barandillas': 'Barandilla',
+      'Andamio_Trampillas':  'Trampilla',
+      'Andamio_Anclajes':    'Anclaje',
+      'Andamio_Acoples':     'Acople',
+    };
+    function categoryFromObject(obj) {
+      let cur = obj;
+      while (cur) {
+        if (CATEGORY_BY_GROUP[cur.name]) return CATEGORY_BY_GROUP[cur.name];
+        cur = cur.parent;
+      }
+      return null;
+    }
+    container.style.position = 'relative';
+    const tooltip = document.createElement('div');
+    tooltip.className = 'viewer-tooltip';
+    container.appendChild(tooltip);
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+    container.addEventListener('mousemove', (event) => {
+      if (!modelLoaded) return;
+      const rect = container.getBoundingClientRect();
+      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+      const hits = raycaster.intersectObjects(scene.children, true);
+      const cat = hits.length ? categoryFromObject(hits[0].object) : null;
+      if (cat) {
+        tooltip.textContent = cat;
+        tooltip.style.opacity = '1';
+        tooltip.style.left = (event.clientX - rect.left + 14) + 'px';
+        tooltip.style.top  = (event.clientY - rect.top + 14) + 'px';
+      } else {
+        tooltip.style.opacity = '0';
+      }
+    });
+    container.addEventListener('mouseleave', () => {
+      tooltip.style.opacity = '0';
     });
 
     function animate() {

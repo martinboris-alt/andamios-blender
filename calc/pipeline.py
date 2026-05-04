@@ -392,7 +392,11 @@ def build_and_solve(
         wind_zone           (str — "A"/"B"/"C")
         wind_terrain        (str — "0"/"I"/.../"IV")
         apply_imperfections (bool)
+        apply_guardrail     (bool, opcional)
         combo               (str — clave de standard_combos())
+        use_pdelta          (bool, opcional, default False) — análisis de
+                            2º orden P-Delta. Más lento; recomendado en
+                            torres esbeltas (>15 m sin anclajes).
 
     Asume releases ya configurados (o los configura por defecto si no).
     Asume soportes ya configurados; en caso contrario empotra los nodos del
@@ -454,7 +458,14 @@ def build_and_solve(
     if combo_name not in combos:
         combo_name = "ULS_LeadL"
 
-    res = solve(model, combos=combos, combo=combo_name, check_statics=False)
+    use_pdelta = bool(options.get("use_pdelta", False))
+    res = solve(
+        model,
+        combos=combos,
+        combo=combo_name,
+        check_statics=False,
+        use_pdelta=use_pdelta,
+    )
 
     # Sanity check: NaN en desplazamientos = sistema mal restringido.
     # Mejor reportar claramente que dejar pasar resultados sin sentido.

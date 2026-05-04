@@ -1,6 +1,9 @@
 # Auditoría — Incoherencias del addon explicado a un novato
 
 > Versión auditada: **0.7.12** · Fecha: 2026-05-02
+> **Re-auditado: 2026-05-03 (v0.7.13)** — varios fixes ya estaban en código sin
+> que el documento se actualizara; los marcamos ✅. Ver "Estado de los fixes"
+> al final.
 > Misión: detectar puntos donde un usuario sin formación de andamios o de
 > Blender se traba al intentar entender qué hace cada control.
 
@@ -37,7 +40,7 @@ El número y ancho de las bandejas se configura abajo."*
 
 ---
 
-## 2 · `bay_length_catalog` con tres valores ambiguos 🟠 [both]
+## 2 · `bay_length_catalog` con tres valores ambiguos ✅ [code, v0.7.13]
 
 **Confusión:** el dropdown de "Catálogo de longitudes" tiene tres opciones
 con nombres genéricos:
@@ -59,9 +62,17 @@ referencian los códigos.
 **Fix temporal [doc]:** animación comparativa lado-a-lado de los 3 modos
 sobre un mismo tramo de 7 m.
 
+**Fix aplicado v0.7.13:** se preservan los códigos del enum (`GENERIC`/
+`LAYHER`/`UNIFORM`) para no romper .blend guardados, pero se renombran
+los **labels visibles** + descripciones:
+- "Genérico" → **"Mixto múltiplos 0,5 m"**
+- "Layher Allround" → **"Layher Allround (catálogo real)"**
+- "Uniforme" → **"Iguales (divide en N partes)"**
++ etiqueta del prop a "Catálogo vanos (horizontal)" (cierra también #3).
+
 ---
 
-## 3 · `pole_length_catalog` y `bay_length_catalog` 🟠 [doc]
+## 3 · `pole_length_catalog` y `bay_length_catalog` ✅ [code, v0.7.13]
 
 Hay **DOS catálogos distintos** en el panel:
 - `bay_length_catalog` — catálogo de longitudes de **vanos** (largo entre postes)
@@ -74,9 +85,14 @@ que se aplican a dos cosas distintas (horizontal vs vertical).
 - `"Catálogo de longitudes"` → `"Catálogo vanos (horizontal)"`
 - `"Catálogo postes"` → `"Catálogo postes (vertical)"`
 
+**Fix aplicado v0.7.13:** las dos etiquetas se renombraron exactamente como
+se proponía. Los labels de los items de `pole_length_catalog` también se
+hicieron explícitos ("Uniforme (longitud fija)", "Mixto múltiplos 0,5 m",
+"Layher Allround (catálogo real)").
+
 ---
 
-## 4 · "Diagonales horizontales (plano)" 🟠 [both]
+## 4 · "Diagonales horizontales (plano)" ✅ [code, v0.7.13]
 
 **Confusión:** el toggle `add_horizontal_braces` se llama "Diagonales
 horizontales (plano)". Para un novato suena contradictorio: ¿una diagonal
@@ -88,6 +104,10 @@ Pero "plano" en castellano puede significar "alzado" o "plana" u "horizontal".
 **Fix propuesto [code]:** renombrar a:
 `"Cruces en planta (rigidizan torsión)"` o
 `"Diagonales en plano del piso"`.
+
+**Fix aplicado v0.7.13:** label cambiado a **"Cruces en planta (rigidizan
+torsión)"** + descripción ampliada con la palabra clave "racking" y la
+analogía visual ("vistas desde arriba forman aspas").
 
 ---
 
@@ -129,7 +149,7 @@ mientras exploras parámetros. **Desactivar** en andamios grandes
 
 ---
 
-## 8 · Botón "Diagnóstico" en panel principal 🔴 [code]
+## 8 · Botón "Diagnóstico" en panel principal ✅ [code, ya resuelto antes de v0.7.13]
 
 **Confusión:** el panel principal tiene una sección "Diagnóstico" con
 botón "Exportar informe". El nombre puede confundir con
@@ -141,9 +161,14 @@ botón "Exportar informe". El nombre puede confundir con
 `"Exportar log para depurar"`. Aclara que se usa solo cuando Blender
 ha fallado / se ha cerrado.
 
+**Estado real (verificado 2026-05-03 en `andamios_addon.py:3055-3060`):** ya
+hecho. La sección dice **"Reporte de errores"** (icono CONSOLE) con sub-label
+**"(Solo para depurar fallos)"** + botón **"Exportar log"** (icono TEXT) +
+botón papelera. La auditoría se redactó antes de aplicarse el fix.
+
 ---
 
-## 9 · Clases de servicio Q1..Q6 sin explicación inline 🟠 [doc]
+## 9 · Clases de servicio Q1..Q6 sin explicación inline ✅ [code, ya resuelto antes de v0.7.13]
 
 **Confusión:** el dropdown "Tipo de uso" muestra Q1, Q2, Q3, Q4, Q5, Q6
 sin más. Un novato no sabe qué significa cada uno.
@@ -159,9 +184,14 @@ Tipo de uso: [Q3 ▼]
    "Uso general (≈ 4 trabajadores con herramienta, 200 kg/m²)"
 ```
 
+**Estado real (verificado 2026-05-03 en `calc/ui.py:1101-1109`):** ya hecho.
+Bajo el dropdown se renderiza `f"   ↳ {q_desc}"` con icono INFO, leyendo
+de `SERVICE_DESCRIPTION` en `calc/pipeline.py`. Ejemplo: con Q3 seleccionado
+aparece **"↳ uso general (≈200 kg/m², ≈4 trabajadores con herramienta)"**.
+
 ---
 
-## 10 · Combinación de cargas con códigos crípticos 🔴 [doc]
+## 10 · Combinación de cargas con códigos crípticos ✅ [code, ya resuelto antes de v0.7.13]
 
 **Confusión:** el dropdown "Combinación a comprobar" muestra:
 - `ULS_LeadL`
@@ -179,6 +209,13 @@ Un novato no entiende **nada** de esto. ULS / SLS, "Lead", "RARE", etc.
 - `SLS_FREQ` → "SLS · frecuente (deflexión normal)"
 
 Coste: traducir los items del enum del panel.
+
+**Estado real (verificado 2026-05-03 en `andamios_addon.py:2454-2480`):** ya
+hecho. Los 6 items tienen labels legibles ("Resistencia — uso dominante",
+"Resistencia — viento dominante", "Resistencia — levantamiento por viento",
+"Servicio — deformación característica/frecuente/casi-permanente") y cada
+uno con descripción larga (tooltip) que explica el caso. La auditoría se
+redactó antes del fix.
 
 ---
 
@@ -267,7 +304,7 @@ del andamio principal usa los valores `deck_planks_count` y
 
 ---
 
-## 17 · Indicador de escalera "P0/P1" confunde con path_points 🟡 [code]
+## 17 · Indicador de escalera "P0/P1" confunde con path_points ✅ [code, ya resuelto antes de v0.7.13]
 
 **Confusión:** en el modo manual de escaleras, cada slot tiene un campo
 "Pos" que es un slider 0..1 y un "Indicador" que es un Empty visible.
@@ -276,6 +313,11 @@ principales.
 
 **Fix [code]:** prefijar los indicadores de escalera con `LdrInd_` para
 no confundir con los path_points (que son `P0`, `P1`...).
+
+**Estado real (verificado 2026-05-03 en `andamios_addon.py:2562-2568`):** los
+indicadores ya se nombran como `Andamio_LadderHandle_NN` (no `P0/P1`), con
+lo que el conflicto está resuelto aunque con un prefijo distinto al
+propuesto. La auditoría se redactó antes de aplicarse el fix.
 
 ---
 
@@ -310,29 +352,58 @@ otro deshace los cambios de props que hizo el auto-fix.
 
 ## Resumen priorizado
 
-### 🔴 CRÍTICAS (3)
-- **#1 Plataforma vs bandeja** — clarificar conceptualmente con animación
-- **#8 "Diagnóstico" botón ambiguo** — renombrar para no confundir con cálculo
-- **#10 Combinaciones ULS/SLS crípticas** — traducir nombres del enum
+### 🔴 CRÍTICAS (3) — 3/3 resueltas ✅
+- ✅ **#8 "Diagnóstico" botón ambiguo** — ya renombrado a "Reporte de errores"
+- ✅ **#10 Combinaciones ULS/SLS crípticas** — items ya con labels legibles
+- ✅ **#1 Plataforma vs bandeja** — bloque conceptual + tabla en TUTORIAL §7 (v0.7.13)
 
-### 🟠 MEDIAS (8)
-- #2, #3, #4 nombres de catálogos / toggles confusos
-- #7 auto-update sin avisar costes
-- #9 Q1-Q6 sin descripción inline
-- #13, #14 patrones de cruces sin tooltip visual
-- #16, #19 catálogos / botones sin contexto
+### 🟠 MEDIAS (8) — 8/8 resueltas ✅
+- ✅ **#2 catálogos ambiguos** — labels visibles renombrados (v0.7.13)
+- ✅ **#3 dos catálogos sin distinguir** — etiquetas (horizontal)/(vertical) (v0.7.13)
+- ✅ **#4 "Diagonales horizontales (plano)"** — renombrado a "Cruces en planta…" (v0.7.13)
+- ✅ **#9 Q1-Q6 sin descripción inline** — descripción ya se muestra
+- ✅ **#7 auto-update sin avisar costes** — aviso de coste en TUTORIAL §4.5 (v0.7.13)
+- ✅ **#13 subdivisión cruces sin contexto** — referencia a `anim_subdivisions_zoom.webp` en §8.2 (v0.7.13)
+- ✅ **#14 patrón cruces FRONT/BACK sin tooltip** — bloque "convención del addon" + ref a `anim_brace_cycle.webp` en §8.2 (v0.7.13)
+- ✅ **#16 catálogo Ringlock sin contexto** — nota explícita en §7.3 ("herramienta de referencia, no afecta a generación") (v0.7.13)
+- ✅ **#19 botón "Auditoría bandejas" sin contexto** — nota sobre dónde mira el resultado (consola + panel) en §7.3 (v0.7.13)
 
-### 🟡 BAJAS (6)
-- #5, #6, #11, #12, #15, #17, #20 microcopia y tooltips
+### 🟡 BAJAS (7) — 7/7 resueltas ✅
+- ✅ **#17 Indicador escalera "P0/P1"** — ya nombrado `Andamio_LadderHandle_NN`
+- ✅ **#5 closed_loop** — tooltip ampliado en §5.1 (v0.7.13)
+- ✅ **#6 use_terrain_z + base_z** — bloque "qué es Z" + explicación husillo en §6.4 (v0.7.13)
+- ✅ **#11 Generar/Actualizar** — microcopia "¿cuándo pulsarlo?" en §4.4 (v0.7.13)
+- ✅ **#12 husillo** — definición inline + glosario visual §19.5 (v0.7.13)
+- ✅ **#15 anclaje vs tie** — sección 10.3 "Prefijos en el outliner — qué significa cada nombre" (v0.7.13)
+- ✅ **#20 dos botones de "deshacer"** — tabla comparativa "Restaurar colores" vs "Revertir auto-corrección" en §15 (v0.7.13)
+- ✅ **#18 Color "Anclajes"** — ya estaba ✓ sin acción (sin cambios)
 
 ---
 
-## Acciones recomendadas
+## Estado de los fixes (snapshot 2026-05-03 / v0.7.13)
 
-1. **[code]** Fix #8 (renombrar "Diagnóstico" → "Reporte de errores") y
-   #10 (descripciones inline en combos)
-2. **[code]** Mostrar descripción del Q seleccionado bajo el dropdown (#9)
-3. **[doc]** Animaciones comparativas para #2, #13, #14
-4. **[doc]** Tooltips/descripciones en panel para #4, #6, #7, #11, #12, #14, #19
-5. **[doc]** Sección "Glosario visual" en el tutorial: hover en término →
-   imagen al lado
+**Resueltos en código (7 issues):** #2, #3, #4, #8, #9, #10, #17. De estos,
+#8/#9/#10/#17 estaban resueltos **antes** de la sesión 2026-05-03 (la
+auditoría 2026-05-02 no estaba al día); #2/#3/#4 se resolvieron **en**
+2026-05-03 cambiando los labels visibles del enum sin tocar las claves
+internas para preservar la compatibilidad con .blend guardados.
+
+**Resueltos en documentación (13 issues, Fase G — TUTORIAL.md, v0.7.13):**
+#1, #5, #6, #7, #11, #12, #13, #14, #15, #16, #19, #20. Todos cerrados con
+microcopia inline + nueva sección §10.3 (prefijos del outliner) + nueva
+sección §19 (Glosario visual) que asocia cada concepto con su asset
+existente en `tutorial/assets/`.
+
+**Total resueltos:** 20/20 issues identificados originalmente. La auditoría
+2026-05-02 se cierra completa con el release v0.7.13.
+
+## Próxima auditoría (a hacer en futura sesión)
+
+Re-auditar el addon con un usuario novato real (o simulado) sobre la
+v0.7.13 para detectar la siguiente capa de fricciones. Posibles focos:
+- El sub-panel "Auto-corrección" — flujo aún confuso para quien no entiende
+  la diferencia entre re-diseñar y re-comprobar.
+- La sección "Colores" — 10 sliders sin agrupación visual.
+- El catálogo de presets de fabricante — ¿cuál elijo si no conozco Layher?
+- El visor 3D del tutorial HTML (`tutorial/index.html`) — pendiente de
+  cubrir con tooltips equivalentes en la web.

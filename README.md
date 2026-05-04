@@ -6,7 +6,7 @@
 
 ![Andamio U-shape generado con el addon](tutorial/assets/ex3_ushape_iso.png)
 
-[![Tests](https://img.shields.io/badge/tests-421%20passing-success)](#)
+[![Tests](https://img.shields.io/badge/tests-434%20passing-success)](#)
 [![Blender](https://img.shields.io/badge/blender-5.1+-orange)](#)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Web](https://img.shields.io/badge/landing-mechanicalpro.es%2Fandamios-2563eb)](https://mechanicalpro.vercel.app/andamios)
@@ -112,7 +112,9 @@ una hoja A3 imprimible.
 - Carga horizontal de barandilla (EN 12811 §7.2)
 - K_φ semi-rígido en uniones (Anexo E EN 1993-1-1)
 - Auto-corrección iterativa estilo ANSYS optimizer
-- 421 tests unitarios
+- **Análisis P-Δ (2º orden geométrico) opt-in** — captura la amplificación
+  de momentos por desplome en torres esbeltas (EN 1993-1-1 §5.2)
+- 434 tests unitarios
 
 ### Exportación
 - **BOM HTML** — lista de materiales por categoría con peso, metros, fotos
@@ -175,12 +177,16 @@ LICENSE               # MIT
 /snap/blender/current/5.1/python/bin/python3.13 -m pytest calc/tests/ -q
 ```
 
-Resultado esperado: **421 passed**.
+Resultado esperado: **434 passed**.
 
 ## Limitaciones conocidas
 
-- **Análisis lineal** — sin P-Δ. Conservador para andamios típicos pero
-  subestima ~10-20 % en torres muy esbeltas (>15 m sin anclajes).
+- **Análisis lineal por defecto** — para casos típicos es suficiente
+  y rápido. Para torres esbeltas (>15 m sin anclajes) o cuando el
+  cálculo lineal da utilizaciones cerca de 1,0, activar el toggle
+  **Análisis P-Δ (2º orden)** del sub-panel "Cargas y combinación".
+  Más lento (~2-5×) pero captura la amplificación de momentos por
+  desplome (EN 1993-1-1 §5.2).
 - **Sin sismo** — el cálculo cubre cargas verticales + viento +
   imperfecciones, no acción sísmica.
 - **Voladizos / ménsulas complejas** — geometría parcialmente soportada;

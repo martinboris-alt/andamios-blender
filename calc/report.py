@@ -330,6 +330,22 @@ def _config_rows_html(options: Mapping[str, object]) -> str:
     }.get(str(options.get("combo", "ULS_LeadL")), str(options.get("combo", "—")))
     rows.append(f"<tr><th>Caso analizado</th><td>{_esc(combo_label)}</td></tr>")
 
+    if options.get("use_pdelta"):
+        rows.append(
+            "<tr><th>Tipo de análisis</th>"
+            "<td><strong>2º orden geométrico (P-Δ)</strong> — la rigidez se "
+            "actualiza iterativamente con la posición deformada de los postes. "
+            "Captura la amplificación de momentos por desplome de la cúspide. "
+            "Recomendado por EN 1993-1-1 §5.2 cuando α<sub>cr</sub> ≤ 10.</td></tr>"
+        )
+    else:
+        rows.append(
+            "<tr><th>Tipo de análisis</th>"
+            "<td>Lineal de 1<sup>er</sup> orden (rigidez basada en geometría "
+            "indeformada). Adecuado para la mayoría de andamios; en torres "
+            "esbeltas (>15 m sin anclajes) considerar activar P-Δ.</td></tr>"
+        )
+
     rows.append("</tbody></table>")
     return "".join(rows)
 

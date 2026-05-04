@@ -66,6 +66,7 @@ class Results:
     members: dict[str, MemberResult] = field(default_factory=dict)
     combo: str = ""
     pynite_model: object = None        # FEModel3D — acceso de bajo nivel
+    pdelta: bool = False               # True si se ejecutó analyze_PDelta
 
 
 # ---------------------------------------------------------------------------
@@ -136,14 +137,61 @@ def solve(
     combo: Optional[str] = None,
     check_statics: bool = True,
     log: bool = False,
+    use_pdelta: bool = False,
+    pdelta_max_iter: int = 30,
 ) -> Results:
-    """Ejecuta análisis lineal elástico y devuelve resultados para `combo`.
+    """Ejecuta análisis y devuelve resultados para `combo`.
+
+    Por defecto análisis lineal elástico de primer orden. Si
+    `use_pdelta=True` ejecuta análisis P-Delta (segundo orden geométrico)
+    iterativo de PyNite — captura la amplificación de momentos por el
+    desplome de la cúspide en torres esbeltas. Más lento (~2-5×) pero
+    requerido por EN 1993-1-1 §5.2 cuando el factor crítico α_cr ≤ 10.
+
+    Si P-Δ no converge (sistema inestable bajo la combinación dada),
+    PyNite lanza `ValueError`; aquí lo reempaquetamos como
+    `RuntimeError` con mensaje accionable para el usuario.
 
     Si `combo` es None, se usa la primera combinación de `combos` (o 'ULS'
     cuando se aplica el default).
     """
     fem = build_pynite_model(model, combos)
-    fem.analyze(check_statics=check_statics, log=log)
+    if use_pdelta:
+        import math
+        import warnings
+        try:
+            with warnings.catch_warnings(record=True) as w_list:
+                warnings.simplefilter("always")
+                fem.analyze_PDelta(
+                    log=log,
+                    check_stability=True,
+                    max_iter=pdelta_max_iter,
+                    sparse=True,
+                )
+            # PyNite a veces no eleva ValueError ante matriz singular; emite
+            # MatrixRankWarning y devuelve NaN. Tratamos ambos como inestabilidad.
+            singular_warned = any(
+                "singular" in str(w.message).lower() for w in w_list
+            )
+            if not singular_warned:
+                # Verificar NaN en cualquier nodo (matriz singular silenciosa)
+                first_combo = combo or next(iter(fem.load_combos.keys()))
+                for node in fem.nodes.values():
+                    if any(math.isnan(getattr(node, attr)[first_combo])
+                           for attr in ("DX", "DY", "DZ")):
+                        singular_warned = True
+                        break
+            if singular_warned:
+                raise ValueError("matriz de rigidez singular en P-Delta")
+        except ValueError as e:
+            raise RuntimeError(
+                "Análisis P-Delta no convergió: el andamio es inestable "
+                "bajo esta combinación de cargas (vuelco o pandeo global). "
+                "Añade anclajes a fachada, reduce la altura, o usa secciones "
+                f"más rígidas. Detalle interno: {e}"
+            ) from e
+    else:
+        fem.analyze(check_statics=check_statics, log=log)
 
     if combo is None:
         if combos is None:
@@ -151,7 +199,7 @@ def solve(
         else:
             combo = next(iter(combos.keys()))
 
-    res = Results(combo=combo, pynite_model=fem)
+    res = Results(combo=combo, pynite_model=fem, pdelta=use_pdelta)
 
     for nid, node in fem.nodes.items():
         res.nodes[nid] = NodeResult(

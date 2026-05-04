@@ -53,6 +53,10 @@ def test_kind_for_known_prefixes(name, expected):
     # Sub-piezas duplicadas de escalera (sólo rail_a cuenta)
     "Ladder_F1_02_rail_b",
     "Ladder_F1_02_step_03",
+    # Pasamanos lateral de escalera (v0.7.15) — sub-pieza, no marker propio
+    "Ladder_F1_02_handrail",
+    "Ladder_F1_02_handrail_post_bot",
+    "Ladder_F1_02_handrail_post_top",
     # Decorativos del lid (la trampilla cuenta como Lid_, no estos)
     "Hinge_F1_02",
     "LidHandle_F1_02",

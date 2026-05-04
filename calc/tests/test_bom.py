@@ -65,6 +65,9 @@ def test_category_for_name(name, expected):
     "LidHandle_F1_000_l",        # asas
     "Ladder_000_F0_rail_b",      # sub-pieza de escalera (no representativa)
     "Ladder_000_F0_step_3",
+    "Ladder_000_F0_handrail",        # pasamanos lateral (v0.7.15)
+    "Ladder_000_F0_handrail_post_bot",
+    "Ladder_000_F0_handrail_post_top",
 ])
 def test_non_bom_objects_filtered_out(name):
     assert category_for_name(name) is None

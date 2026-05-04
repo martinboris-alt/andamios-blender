@@ -12,6 +12,7 @@ import bpy
 import bmesh
 from math import atan2, ceil, sqrt, tan, sin, cos, radians, pi
 from mathutils import Vector
+from bpy.app.translations import pgettext_iface as iface_
 from bpy.props import (
     FloatProperty, IntProperty, BoolProperty,
     PointerProperty, EnumProperty, StringProperty,
@@ -657,6 +658,52 @@ def _ladder(p_bottom, p_top, width, rung_count, name, coll, side_axis=None):
         r = _make_tube(a, b, rung_d, f"{name}_rung_{i:02d}", coll)
         if r:
             objs.append(r)
+    return objs
+
+
+def _ladder_handrail(p_bottom, p_top, side_axis, width, height, name, coll):
+    """Pasamanos lateral elevado paralelo a un lado de la escalera.
+
+    Geometría: un tubo a `height` sobre el `rail_a` de la escalera (lado +side)
+    + 2 verticales cortos que conectan riel y pasamanos en los extremos.
+    Sirve para el agarre del trabajador durante el ascenso (EN 12811 §7.2).
+
+    Naming: `{name}_handrail`, `{name}_handrail_post_bot`, `{name}_handrail_post_top`.
+    Estas piezas NO se cuentan como escalera independiente en BOM
+    (`category_for_name` sólo cuenta `_rail_a`); van como sub-piezas.
+    """
+    p_bot = Vector(p_bottom)
+    p_top = Vector(p_top)
+    if (p_top - p_bot).length < 1e-6 or height <= 0:
+        return []
+    side_v = Vector(side_axis)
+    side_v.z = 0.0
+    if side_v.length < 1e-6:
+        side_v = Vector((1.0, 0.0, 0.0))
+    side = side_v.normalized() * (width * 0.5)
+    up = Vector((0.0, 0.0, height))
+
+    rail_d = TUBE_DIAM * 0.6   # mismo grosor que rieles principales
+    post_d = TUBE_DIAM * 0.5
+
+    rail_bot = p_bot + side          # extremo inferior del pasamanos = riel_a inferior
+    rail_top = p_top + side          # extremo superior
+    handrail_bot = rail_bot + up
+    handrail_top = rail_top + up
+
+    objs = []
+    handrail = _make_tube(handrail_bot, handrail_top, rail_d,
+                          f"{name}_handrail", coll)
+    if handrail:
+        objs.append(handrail)
+    post_bot = _make_tube(rail_bot, handrail_bot, post_d,
+                          f"{name}_handrail_post_bot", coll)
+    if post_bot:
+        objs.append(post_bot)
+    post_top = _make_tube(rail_top, handrail_top, post_d,
+                          f"{name}_handrail_post_top", coll)
+    if post_top:
+        objs.append(post_top)
     return objs
 
 
@@ -1600,6 +1647,15 @@ def generate_scaffold(props, context):
                     coll=coll_ladders,
                     side_axis=prp,
                 )
+                if props.add_ladder_handrail:
+                    _ladder_handrail(
+                        base, top,
+                        side_axis=prp,
+                        width=LADDER_WIDTH,
+                        height=props.ladder_handrail_height,
+                        name=f"Ladder_{i:03d}_F{f_idx}",
+                        coll=coll_ladders,
+                    )
                 # Foot plate under the ladder base on the floor below (visual support)
                 foot_z = z_bot + 0.01
                 foot_center = Vector((bot_xy.x, bot_xy.y, foot_z))
@@ -2062,14 +2118,14 @@ class ANDAMIOS_Props(PropertyGroup):
         update=_on_prop_change_regen,
     )
     bay_length_catalog: EnumProperty(
-        name="Catálogo de longitudes",
+        name="Catálogo vanos (horizontal)",
         items=[
-            ('GENERIC', "Genérico", "Múltiplos limpios: 1.0/1.5/2.0/2.5/3.0 m. Encaja exacto con planificaciones en múltiplos de 0.5 m"),
-            ('LAYHER',  "Layher Allround", "Catálogo real: 0.73/1.09/1.40/1.57/1.73/2.07/2.57/3.07 m"),
-            ('UNIFORM', "Uniforme",  "Divide cada tramo uniformemente por section_length (ningún vano estandarizado)"),
+            ('GENERIC', "Mixto múltiplos 0,5 m", "Combina piezas de 1.0/1.5/2.0/2.5/3.0 m. Encaja exacto con planificaciones en múltiplos de 0.5 m"),
+            ('LAYHER',  "Layher Allround (catálogo real)", "Combina piezas Layher reales: 0.73/1.09/1.40/1.57/1.73/2.07/2.57/3.07 m"),
+            ('UNIFORM', "Iguales (divide en N partes)",  "Reparte el tramo en partes iguales del tamaño 'Longitud objetivo' (ningún vano estandarizado)"),
         ],
         default='GENERIC',
-        description="Cómo subdividir cada tramo de la polilínea en vanos. Las dos primeras opciones usan piezas estándar + pieza de compensación al final del tramo si no encaja exacto",
+        description="Cómo subdividir cada tramo HORIZONTAL de la polilínea en vanos (longitud entre postes). Las dos primeras opciones usan piezas estándar + pieza de compensación al final del tramo si no encaja exacto",
         update=_on_prop_change_regen,
     )
     base_z: FloatProperty(
@@ -2115,14 +2171,14 @@ class ANDAMIOS_Props(PropertyGroup):
         update=_on_prop_change_regen,
     )
     pole_length_catalog: EnumProperty(
-        name="Catálogo postes",
+        name="Catálogo postes (vertical)",
         items=[
-            ('UNIFORM', "Uniforme",        "Usa la 'Longitud poste' fija (modo legacy)"),
-            ('GENERIC', "Genérico",        "DP con 0.5/1.0/1.5/2.0/2.5/3.0 m"),
-            ('LAYHER',  "Layher Allround", "DP con 0.5/1.0/1.5/2.0/3.0/4.0 m (catálogo real)"),
+            ('UNIFORM', "Uniforme (longitud fija)",        "Usa el valor 'Longitud poste' como tamaño único del segmento (modo legacy)"),
+            ('GENERIC', "Mixto múltiplos 0,5 m",           "Combina piezas de 0.5/1.0/1.5/2.0/2.5/3.0 m hasta cubrir la altura"),
+            ('LAYHER',  "Layher Allround (catálogo real)", "Combina piezas Layher reales: 0.5/1.0/1.5/2.0/3.0/4.0 m"),
         ],
         default='UNIFORM',
-        description="Catálogo de longitudes para los segmentos de poste. Los modos GENERIC/LAYHER combinan piezas estándar para cubrir la altura completa",
+        description="Cómo segmentar cada poste VERTICAL en piezas. Los modos Mixto y Layher combinan piezas estándar hasta cubrir la altura completa de cada poste",
         update=_on_prop_change_regen,
     )
     add_ties: BoolProperty(
@@ -2210,9 +2266,9 @@ class ANDAMIOS_Props(PropertyGroup):
         update=_on_prop_change_regen,
     )
     add_horizontal_braces: BoolProperty(
-        name="Diagonales horizontales (plano)",
+        name="Cruces en planta (rigidizan torsión)",
         default=False,
-        description="Genera diagonales en el plano del deck (rigidizadores en planta) cada N plantas y M vanos",
+        description="Genera diagonales en el plano horizontal del deck (vistas desde arriba forman aspas), cada N plantas y M vanos. Rigidizan el andamio frente a torsión (racking)",
         update=_on_prop_change_regen,
     )
     h_brace_every_floors: IntProperty(
@@ -2249,6 +2305,29 @@ class ANDAMIOS_Props(PropertyGroup):
         name="Anchura escalera (m)",
         default=0.42, min=0.30, max=0.80, unit='LENGTH',
         description="Separación entre rieles (= longitud de los peldaños)",
+        update=_on_prop_change_regen,
+    )
+    add_ladder_handrail: BoolProperty(
+        name="Pasamanos lateral (escalera)",
+        default=True,
+        description=(
+            "Añade un tubo paralelo a un lado de la escalera, elevado "
+            "sobre los rieles principales, para que el trabajador se "
+            "agarre durante el ascenso. Equivale a la pieza Layher "
+            "Steigleiterschutzgeländer (EN 12811-1 §7.2 — protección "
+            "personal en accesos verticales)"
+        ),
+        update=_on_prop_change_regen,
+    )
+    ladder_handrail_height: FloatProperty(
+        name="Altura pasamanos (m)",
+        default=0.90, min=0.70, max=1.20, unit='LENGTH',
+        description=(
+            "Distancia vertical entre el riel de la escalera y el "
+            "pasamanos elevado. 0,9-1,0 m es el rango ergonómico estándar "
+            "para que el trabajador llegue al agarre sin esfuerzo durante "
+            "el ascenso"
+        ),
         update=_on_prop_change_regen,
     )
     lid_open_deg: FloatProperty(
@@ -2415,6 +2494,22 @@ class ANDAMIOS_Props(PropertyGroup):
             "de la barandilla, según exige EN 12811-1 §7.2.1 (carga de "
             "protección personal contra caídas). Activar para verificar "
             "que los postes resisten también este cortante adicional"
+        ),
+    )
+
+    calc_use_pdelta: BoolProperty(
+        name="Análisis P-Δ (2º orden geométrico)",
+        default=False,
+        description=(
+            "Activa análisis de segundo orden P-Delta: la rigidez se "
+            "recalcula iterativamente teniendo en cuenta la posición "
+            "deformada de los postes. Captura la amplificación de "
+            "momentos cuando la cúspide del andamio se desploma bajo "
+            "carga (efecto P·Δ). Más lento (~2-5×) pero requerido por "
+            "EN 1993-1-1 §5.2 cuando α_cr ≤ 10. RECOMENDADO en torres "
+            "esbeltas (>15 m sin anclajes) o si el cálculo lineal da "
+            "utilizaciones próximas a 1,0 — el segundo orden puede "
+            "subir el resultado un 10-20 %"
         ),
     )
 
@@ -2678,6 +2773,33 @@ class ANDAMIOS_OT_diag_export(Operator):
         return {'FINISHED'}
 
 
+class ANDAMIOS_OT_reset_colors(Operator):
+    bl_idname = "andamios.reset_colors"
+    bl_label = "Restablecer colores por defecto"
+    bl_description = "Vuelve a los colores originales del addon para todas las categorías"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    _DEFAULTS = {
+        "color_postes":      (0.20, 0.45, 0.85, 1.0),
+        "color_travesanos":  (0.40, 0.65, 0.95, 1.0),
+        "color_plataformas": (0.55, 0.35, 0.15, 1.0),
+        "color_cruces":      (0.95, 0.45, 0.10, 1.0),
+        "color_escaleras":   (0.85, 0.15, 0.15, 1.0),
+        "color_barandillas": (1.00, 0.85, 0.00, 1.0),
+        "color_trampillas":  (0.20, 0.70, 0.30, 1.0),
+        "color_anclajes":    (0.85, 0.85, 0.85, 1.0),
+        "color_husillos":    (0.55, 0.55, 0.60, 1.0),
+        "color_acoples":     (0.30, 0.30, 0.35, 1.0),
+    }
+
+    def execute(self, context):
+        props = context.scene.andamios_props
+        for prop, val in self._DEFAULTS.items():
+            setattr(props, prop, val)
+        self.report({'INFO'}, "Colores restablecidos a los valores por defecto")
+        return {'FINISHED'}
+
+
 class ANDAMIOS_OT_diag_clear(Operator):
     """Borra el log de breadcrumbs (empezar de cero)."""
     bl_idname = "andamios.diag_clear"
@@ -2847,8 +2969,28 @@ class ANDAMIOS_PT_panel(Panel):
         layout = self.layout
         props = context.scene.andamios_props
 
-        # Preset rápido en lo alto del panel
+        # Preset rápido en lo alto del panel + guía inline para principiantes
         layout.prop(props, "preset")
+        guide = layout.column(align=True); guide.scale_y = 0.85
+        guide.label(
+            text="Cambia: profundidad, nº y ancho de bandejas, catálogo de vanos",
+            icon='INFO',
+        )
+        if props.preset != 'CUSTOM':
+            cfg = _PRESETS.get(props.preset, {})
+            derived = False
+            for k, expected in cfg.items():
+                actual = getattr(props, k, None)
+                if isinstance(expected, float) and isinstance(actual, float):
+                    if abs(actual - expected) > 1e-4:
+                        derived = True; break
+                elif actual != expected:
+                    derived = True; break
+            if derived:
+                guide.label(
+                    text="Has cambiado algo · pon 'Personalizado' para no liarte",
+                    icon='QUESTION',
+                )
 
         box = layout.box()
         box.label(text="Trayectoria (polilínea)", icon='IPO_LINEAR')
@@ -2902,14 +3044,24 @@ class ANDAMIOS_PT_panel(Panel):
         # Validation warnings
         n_planks_fit = int(props.scaffold_depth / max(0.05, props.deck_plank_width)) if props.add_decks else 0
         if props.add_decks and n_planks_fit < props.deck_planks_count:
-            box.label(text=f"⚠ Solo entran {n_planks_fit} bandejas en {props.scaffold_depth:.2f} m", icon='ERROR')
+            box.label(
+                text=iface_("⚠ Solo entran %d bandejas en %.2f m") % (
+                    n_planks_fit, props.scaffold_depth,
+                ),
+                icon='ERROR',
+            )
         if props.add_ladders:
             from math import sqrt as _sqrt
             try:
                 _tilt = _sqrt(max(0.0, props.ladder_length ** 2 - props.floor_height ** 2))
                 est_bay_len = props.section_length
                 if _tilt > est_bay_len - 0.1:
-                    box.label(text=f"⚠ tilt {_tilt:.2f} m > vano {est_bay_len:.2f} m: la base puede salir", icon='ERROR')
+                    box.label(
+                        text=iface_("⚠ tilt %.2f m > vano %.2f m: la base puede salir") % (
+                            _tilt, est_bay_len,
+                        ),
+                        icon='ERROR',
+                    )
             except ValueError:
                 pass
 
@@ -2967,6 +3119,12 @@ class ANDAMIOS_PT_panel(Panel):
         sub3 = box.row()
         sub3.enabled = props.add_ladders
         sub3.prop(props, "lid_open_deg")
+        sub_h = box.row(align=True)
+        sub_h.enabled = props.add_ladders
+        sub_h.prop(props, "add_ladder_handrail")
+        sub_h2 = box.row()
+        sub_h2.enabled = props.add_ladders and props.add_ladder_handrail
+        sub_h2.prop(props, "ladder_handrail_height")
 
         box.prop(props, "add_ties")
         sub_t = box.row(align=True)
@@ -2988,23 +3146,51 @@ class ANDAMIOS_PT_panel(Panel):
         spec = _deck_spec(props.selected_deck_id)
         if spec is not None:
             info = box.column(align=True)
-            info.label(text=f"{spec['nominal_length']:.2f} m × {spec['deck_width']:.2f} m · {spec['construction_type']}", icon='INFO')
-            info.label(text=f"Clase {spec['load_class']} → qk = {spec['qk_uniform_kN_m2']:.2f} kN/m²")
-            info.label(text=f"Peso: {spec['self_weight_kg']:.1f} kg · MRd = {spec['MRd_kNm']:.2f} kN·m · VRd = {spec['VRd_kN']:.1f} kN")
-            info.label(text=f"Sistema: {spec['system_compatibility']} · CE")
+            info.label(
+                text=iface_("%.2f m × %.2f m · %s") % (
+                    spec['nominal_length'], spec['deck_width'], spec['construction_type'],
+                ),
+                icon='INFO',
+            )
+            info.label(
+                text=iface_("Clase %s → qk = %.2f kN/m²") % (
+                    spec['load_class'], spec['qk_uniform_kN_m2'],
+                ),
+            )
+            info.label(
+                text=iface_("Peso: %.1f kg · MRd = %.2f kN·m · VRd = %.1f kN") % (
+                    spec['self_weight_kg'], spec['MRd_kNm'], spec['VRd_kN'],
+                ),
+            )
+            info.label(
+                text=iface_("Sistema: %s · CE") % (spec['system_compatibility'],),
+            )
             if spec.get("is_estimated"):
-                info.label(text="⚠ Valores estructurales conservadores estimados", icon='ERROR')
+                info.label(text=iface_("⚠ Valores estructurales conservadores estimados"), icon='ERROR')
         # Indicador de cobertura: hueco perp entre las N bandejas y el back row.
         if props.add_decks:
             tot_planks_w = props.deck_planks_count * props.deck_plank_width
             gap_perp_mm = (props.scaffold_depth - tot_planks_w) * 1000.0
             cov = box.row()
             if gap_perp_mm > DECK_GAP_MAX_MM:
-                cov.label(text=f"⚠ Hueco perp {gap_perp_mm:.0f} mm > {int(DECK_GAP_MAX_MM)} mm (EN 12811-1)", icon='ERROR')
+                cov.label(
+                    text=iface_("⚠ Hueco perp %.0f mm > %d mm (EN 12811-1)") % (
+                        gap_perp_mm, int(DECK_GAP_MAX_MM),
+                    ),
+                    icon='ERROR',
+                )
             elif gap_perp_mm < -1:
-                cov.label(text=f"⚠ Bandejas exceden depth en {-gap_perp_mm:.0f} mm", icon='ERROR')
+                cov.label(
+                    text=iface_("⚠ Bandejas exceden depth en %.0f mm") % (-gap_perp_mm,),
+                    icon='ERROR',
+                )
             else:
-                cov.label(text=f"Hueco perp {gap_perp_mm:.0f} mm ≤ {int(DECK_GAP_MAX_MM)} mm ✓", icon='CHECKMARK')
+                cov.label(
+                    text=iface_("Hueco perp %.0f mm ≤ %d mm ✓") % (
+                        gap_perp_mm, int(DECK_GAP_MAX_MM),
+                    ),
+                    icon='CHECKMARK',
+                )
         # Sugerencia de combinación (visible siempre que el hueco esté fuera de tolerancia)
         if props.add_decks:
             sug = _suggest_deck_cover(props.scaffold_depth, DECK_GAP_MAX_MM)
@@ -3012,7 +3198,9 @@ class ANDAMIOS_PT_panel(Panel):
             if not current_gap_in_tol and sug["within_tol"]:
                 w_txt = " + ".join(f"{w:.2f}" for w in sug["widths"])
                 box.label(
-                    text=f"💡 Sugerido: {w_txt} m → hueco {sug['gap_mm']:.0f} mm",
+                    text=iface_("💡 Sugerido: %s m → hueco %.0f mm") % (
+                        w_txt, sug['gap_mm'],
+                    ),
                     icon='LIGHT',
                 )
         # Botones de auditoría y auto-cubrir
@@ -3020,20 +3208,32 @@ class ANDAMIOS_PT_panel(Panel):
         row_da.operator("andamios.deck_audit", icon='VIEWZOOM')
         row_da.operator("andamios.deck_auto_cover", icon='SHADERFX')
 
-        # Colores por categoría (colapsable)
+        # Colores agrupados por función: Estructura · Acceso · Seguridad
         box = layout.box()
-        box.label(text="Colores", icon='COLOR')
-        cgrid = box.grid_flow(row_major=True, columns=2, even_columns=True, even_rows=True, align=True)
-        cgrid.prop(props, "color_postes", text="Postes")
-        cgrid.prop(props, "color_travesanos", text="Travesaños")
-        cgrid.prop(props, "color_plataformas", text="Plataformas")
-        cgrid.prop(props, "color_cruces", text="Cruces")
-        cgrid.prop(props, "color_escaleras", text="Escaleras")
-        cgrid.prop(props, "color_barandillas", text="Barandillas")
-        cgrid.prop(props, "color_trampillas", text="Trampillas")
-        cgrid.prop(props, "color_anclajes", text="Anclajes")
-        cgrid.prop(props, "color_husillos", text="Husillos")
-        cgrid.prop(props, "color_acoples", text="Acoples")
+        head = box.row(align=True)
+        head.label(text="Colores", icon='COLOR')
+        head.operator("andamios.reset_colors", text="", icon='LOOP_BACK')
+
+        box.label(text="Estructura", icon='MOD_BUILD')
+        g1 = box.grid_flow(row_major=True, columns=2, even_columns=True, even_rows=True, align=True)
+        g1.prop(props, "color_postes", text="Postes")
+        g1.prop(props, "color_travesanos", text="Travesaños")
+        g1.prop(props, "color_cruces", text="Cruces")
+        g1.prop(props, "color_anclajes", text="Anclajes")
+        g1.prop(props, "color_husillos", text="Husillos")
+        g1.prop(props, "color_acoples", text="Acoples")
+
+        box.separator()
+        box.label(text="Acceso", icon='ANIM')
+        g2 = box.grid_flow(row_major=True, columns=2, even_columns=True, even_rows=True, align=True)
+        g2.prop(props, "color_plataformas", text="Plataformas")
+        g2.prop(props, "color_escaleras", text="Escaleras")
+        g2.prop(props, "color_trampillas", text="Trampillas")
+
+        box.separator()
+        box.label(text="Seguridad", icon='LOCKED')
+        g3 = box.grid_flow(row_major=True, columns=2, even_columns=True, even_rows=True, align=True)
+        g3.prop(props, "color_barandillas", text="Barandillas")
 
         col = layout.column(align=True)
         col.scale_y = 1.4
@@ -3079,6 +3279,7 @@ CLASSES = (
     ANDAMIOS_OT_deck_audit,
     ANDAMIOS_OT_deck_auto_cover,
     ANDAMIOS_OT_export_bom,
+    ANDAMIOS_OT_reset_colors,
     ANDAMIOS_OT_diag_export,
     ANDAMIOS_OT_diag_clear,
     ANDAMIOS_UL_path,
@@ -3152,12 +3353,19 @@ def _ensure_pynite():
 
 
 def register():
+    _ensure_calc_on_path()
+    _ensure_user_site_packages()
+    # i18n primero — para que las clases que se registran a continuación
+    # encuentren el dict listo cuando Blender renderice por primera vez.
+    try:
+        import i18n as _i18n
+        _i18n.register()
+    except Exception as e:
+        print(f"[andamios] i18n no disponible: {e}")
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.Scene.andamios_props = PointerProperty(type=ANDAMIOS_Props)
     _auto_register()
-    _ensure_calc_on_path()
-    _ensure_user_site_packages()
     _ensure_pynite()
     # Diagnóstico: faulthandler + breadcrumb del registro. Antes de cualquier
     # otra cosa que pueda romper, para no perder el rastro del propio
@@ -3211,6 +3419,11 @@ def unregister():
     del bpy.types.Scene.andamios_props
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
+    try:
+        import i18n as _i18n
+        _i18n.unregister()
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

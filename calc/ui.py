@@ -20,6 +20,7 @@ unitarios del paquete (calc/tests/) NO importan ui.py.
 from __future__ import annotations
 
 import bpy
+from bpy.app.translations import pgettext_iface as iface_
 from bpy.props import StringProperty
 from bpy.types import Operator, Panel, UIList
 
@@ -61,6 +62,7 @@ def _options_from_props(props):
         "wind_terrain":        str(props.calc_wind_terrain),
         "apply_imperfections": bool(props.calc_apply_imperfections),
         "apply_guardrail":     bool(getattr(props, "calc_apply_guardrail", False)),
+        "use_pdelta":          bool(getattr(props, "calc_use_pdelta", False)),
         "combo":               str(props.calc_combo),
         "color_mode":          str(getattr(props, "calc_color_mode", "utilization")),
     }
@@ -191,11 +193,15 @@ class ANDAMIOS_OT_calc_validate(Operator):
                 self.report({'ERROR'},
                             f"[{first_err.code}] {first_err.message}")
             elif status == "warning":
-                self.report({'WARNING'},
-                            f"{n_wrn} aviso(s), {n_inf} info — revisa el panel")
+                self.report(
+                    {'WARNING'},
+                    iface_("%d aviso(s), %d info — revisa el panel") % (n_wrn, n_inf),
+                )
             else:
-                self.report({'INFO'},
-                            f"Modelo limpio · {n_inf} info · listo para calcular")
+                self.report(
+                    {'INFO'},
+                    iface_("Modelo limpio · %d info · listo para calcular") % (n_inf,),
+                )
         return {'FINISHED'}
 
 
@@ -1131,6 +1137,19 @@ class ANDAMIOS_PT_calc_loads(_SubPanelBase, Panel):
         layout.label(text="Combinación a comprobar:", icon="MOD_LATTICE")
         layout.prop(props, "calc_combo", text="")
 
+        # Avanzado: análisis 2º orden
+        layout.separator()
+        adv = layout.box()
+        adv.label(text="Avanzado", icon="PREFERENCES")
+        row = adv.row(align=True)
+        row.prop(props, "calc_use_pdelta", text="")
+        row.label(text="Análisis P-Δ (2º orden)")
+        if props.calc_use_pdelta:
+            adv.label(
+                text="↳ Captura desplome — más lento, requerido en torres esbeltas",
+                icon='INFO',
+            )
+
 
 class ANDAMIOS_PT_calc_run(_SubPanelBase, Panel):
     """Sub-panel: botones de ejecutar/restaurar."""
@@ -1153,13 +1172,17 @@ class ANDAMIOS_PT_calc_run(_SubPanelBase, Panel):
             sub = validate_row.row(align=True)
             if status == "blocked":
                 sub.alert = True
-                sub.label(text=f"✗ {sumr['n_errors']}E / {sumr['n_warnings']}W",
-                          icon="CANCEL")
+                sub.label(
+                    text=iface_("✗ %dE / %dW") % (sumr['n_errors'], sumr['n_warnings']),
+                    icon="CANCEL",
+                )
             elif status == "warning":
-                sub.label(text=f"⚠ {sumr['n_warnings']}W",
-                          icon="ERROR")
+                sub.label(
+                    text=iface_("⚠ %dW") % (sumr['n_warnings'],),
+                    icon="ERROR",
+                )
             else:
-                sub.label(text="✓ Limpio", icon="CHECKMARK")
+                sub.label(text=iface_("✓ Limpio"), icon="CHECKMARK")
 
             # Lista resumida de issues (max 5 worst-first)
             issues = sumr.get("issues", [])
@@ -1184,7 +1207,10 @@ class ANDAMIOS_PT_calc_run(_SubPanelBase, Panel):
                 rest = sum(1 for it in issues
                             if it["level"] != "INFO") - shown
                 if rest > 0:
-                    box.label(text=f"… y {rest} más", icon="THREE_DOTS")
+                    box.label(
+                        text=iface_("… y %d más") % (rest,),
+                        icon="THREE_DOTS",
+                    )
 
         col = layout.column(align=True)
         col.scale_y = 1.3
@@ -1241,13 +1267,16 @@ class ANDAMIOS_PT_calc_visualization(_SubPanelBase, Panel):
             label = str(scene.get("calc_defl_worst_label", ""))
             box = layout.box()
             sub = box.column(align=True); sub.scale_y = 0.85
-            sub.label(text=f"δ máx: {disp_mm:.1f} mm  ({label})")
+            sub.label(text=iface_("δ máx: %.1f mm  (%s)") % (disp_mm, label))
             if ratio > 0:
-                sub.label(text=f"   ≈ L/{1.0/ratio:.0f}")
+                sub.label(text=iface_("   ≈ L/%.0f") % (1.0 / ratio,))
             n_excessive = int(scene.get("calc_defl_n_excessive", 0))
             if n_excessive:
                 r = sub.row(); r.alert = True
-                r.label(text=f"   {n_excessive} barra(s) > L/100", icon="ERROR")
+                r.label(
+                    text=iface_("   %d barra(s) > L/100") % (n_excessive,),
+                    icon="ERROR",
+                )
             box.operator("andamios.calc_locate_max_deflection",
                          icon="OUTLINER_DATA_EMPTY")
 
@@ -1278,18 +1307,49 @@ class ANDAMIOS_PT_calc_autofix(_SubPanelBase, Panel):
         layout = self.layout
         scene = context.scene
 
+        head = layout.column(align=True); head.scale_y = 0.85
+        head.label(text="Mejora tu andamio automáticamente:", icon='INFO')
+        head.label(text="añade cruces, acorta vanos y ajusta")
+        head.label(text="postes hasta que cumpla (8 intentos).")
+
         col = layout.column(align=True)
+        col.scale_y = 1.2
         col.operator("andamios.calc_autofix", icon="OUTLINER_OB_LIGHTPROBE")
-        if "calc_autofix_snapshot" in scene:
-            col.operator("andamios.calc_autofix_revert", icon="LOOP_BACK")
 
         history = scene.get("calc_autofix_history", "")
+
+        if history:
+            converged = "Convergió" in str(history)
+            status = layout.box()
+            if converged:
+                status.label(text="✓ Listo, tu andamio se ha mejorado",
+                             icon='CHECKMARK')
+            else:
+                status.label(text="Geometría modificada · vuelve a comprobar",
+                             icon='FILE_REFRESH')
+            status.operator("andamios.calc_run",
+                            text="Volver a comprobar", icon='PLAY')
+
+        if "calc_autofix_snapshot" in scene:
+            undo = layout.column(align=True)
+            undo.operator("andamios.calc_autofix_revert",
+                          text="Deshacer cambios", icon="LOOP_BACK")
+
         if history:
             box = layout.box()
             sub = box.column(align=True); sub.scale_y = 0.85
             sub.label(text="Historial de iteraciones:", icon="INFO")
             for line in str(history).split("\n"):
-                sub.label(text=line)
+                s = str(line)
+                if s.startswith("✓"):
+                    icon, text = 'CHECKMARK', s[1:].lstrip()
+                elif s.startswith("✗"):
+                    icon, text = 'CANCEL', s[1:].lstrip()
+                elif s.startswith("⚠"):
+                    icon, text = 'ERROR', s[1:].lstrip()
+                else:
+                    icon, text = 'DOT', s
+                sub.label(text=text, icon=icon)
 
 
 class ANDAMIOS_PT_calc_export(_SubPanelBase, Panel):
@@ -1360,7 +1420,7 @@ class ANDAMIOS_OT_calc_select_failure(Operator):
         props = context.scene.andamios_props
         idx = props.calc_failures_index
         if idx < 0 or idx >= len(props.calc_failures):
-            self.report({'WARNING'}, "Selecciona una fila de la lista primero.")
+            self.report({'WARNING'}, iface_("Selecciona una fila de la lista primero."))
             return {'CANCELLED'}
 
         entry = props.calc_failures[idx]
@@ -1373,8 +1433,10 @@ class ANDAMIOS_OT_calc_select_failure(Operator):
             deformed_name = obj_name + deformed_mod.DEFORMED_OBJ_SUFFIX
             obj = bpy.data.objects.get(deformed_name)
         if obj is None:
-            self.report({'WARNING'},
-                        f"No se encuentra el objeto en la escena: {obj_name}")
+            self.report(
+                {'WARNING'},
+                iface_("No se encuentra el objeto en la escena: %s") % (obj_name,),
+            )
             return {'CANCELLED'}
 
         # Deseleccionar todo, seleccionar éste, hacerlo activo
