@@ -37,3 +37,7 @@ tutorial/build_promo.py
 # Logs / outputs locales
 *.log
 /tmp/
+
+# Trazas y capturas de pruebas con Playwright MCP (web)
+.playwright-mcp/
+mobile-home-*.png
