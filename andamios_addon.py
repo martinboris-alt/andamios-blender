@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Andamios trayectoria",
     "author": "mjuica",
-    "version": (0, 7, 13),
+    "version": (0, 7, 15),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Andamios",
     "description": "Genera andamios paramétricos a lo largo de una polilínea (con esquinas) + cálculo estructural FEM",
@@ -3124,6 +3124,33 @@ def _ensure_user_site_packages():
         print(f"[andamios] sys.path += {user_site}")
 
 
+def _ensure_pynite():
+    """Auto-instala PyNiteFEA y numpy usando el pip de Blender si no están presentes."""
+    try:
+        from Pynite import FEModel3D  # noqa: F401
+        return True
+    except ImportError:
+        pass
+    import sys
+    import subprocess
+    python_exe = sys.executable
+    print("[andamios] PyNiteFEA no encontrado — instalando dependencias de cálculo…")
+    try:
+        subprocess.run(
+            [python_exe, "-m", "pip", "install", "--user", "--quiet",
+             "PyNiteFEA", "numpy"],
+            check=True,
+            capture_output=True,
+        )
+        _ensure_user_site_packages()
+        from Pynite import FEModel3D  # noqa: F401
+        print("[andamios] PyNiteFEA instalado correctamente")
+        return True
+    except Exception as exc:
+        print(f"[andamios] No se pudo instalar PyNiteFEA automáticamente: {exc}")
+        return False
+
+
 def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
@@ -3131,6 +3158,7 @@ def register():
     _auto_register()
     _ensure_calc_on_path()
     _ensure_user_site_packages()
+    _ensure_pynite()
     # Diagnóstico: faulthandler + breadcrumb del registro. Antes de cualquier
     # otra cosa que pueda romper, para no perder el rastro del propio
     # arranque.
