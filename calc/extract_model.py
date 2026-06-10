@@ -62,7 +62,14 @@ _COLLECTION_NAMES = ("Postes", "Travesaños", "Cruces", "Anclajes")
 
 
 def _classify(name: str) -> Optional[str]:
-    """Devuelve el `member_type` para `name`, o None si debe ignorarse."""
+    """Devuelve el `member_type` para `name`, o None si debe ignorarse.
+
+    Strip-ea prefijo de tramo (T0_, T1_, …) antes de clasificar — los
+    andamios escalonados (multi-tramo) usan esos prefijos para evitar
+    colisiones, pero la clasificación FEM debe reconocer los componentes
+    por su tipo nominal (Pole_, Ledger_F_, etc.)."""
+    import re as _re
+    name = _re.sub(r"^T\d+_", "", name)
     for suf in _NON_STRUCTURAL_SUFFIXES:
         if suf in name:
             return None

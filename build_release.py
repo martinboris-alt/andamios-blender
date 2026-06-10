@@ -63,6 +63,21 @@ def build():
         os.path.join(ADDON_DIR, "calc"),
     )
 
+    # tutorial_guide.py (módulo top-level) — sin esto, el tutorial guiado no
+    # se carga al instalar el zip oficial.
+    tut_src = os.path.join(ROOT, "tutorial_guide.py")
+    if os.path.isfile(tut_src):
+        shutil.copy2(tut_src, os.path.join(ADDON_DIR, "tutorial_guide.py"))
+
+    # i18n/ → andamios/i18n/ (catálogos de traducción si existen)
+    i18n_src = os.path.join(ROOT, "i18n")
+    if os.path.isdir(i18n_src):
+        i18n_dst = os.path.join(ADDON_DIR, "i18n")
+        os.makedirs(i18n_dst, exist_ok=True)
+        for entry in os.scandir(i18n_src):
+            if entry.is_file() and entry.name.endswith((".py", ".json")):
+                shutil.copy2(entry.path, os.path.join(i18n_dst, entry.name))
+
     # Crear el zip: los paths dentro deben empezar con "andamios/"
     with zipfile.ZipFile(ZIP_OUT, "w", zipfile.ZIP_DEFLATED) as zf:
         for dirpath, dirnames, filenames in os.walk(ADDON_DIR):

@@ -118,14 +118,16 @@ def test_draw_top_markers_trapdoor_includes_T_label():
     elements = [{"kind": "trapdoor", "x": 0, "y": 0, "z": 0, "label": "T"}]
     svg = _draw_top_markers(_identity_transform(), elements)
     assert "<rect" in svg
-    assert ">T<" in svg
+    # Numeración secuencial por tipo: primer trapdoor → T1
+    assert ">T1<" in svg
     assert _MARKER_STYLE["trapdoor"][0] in svg
 
 
 def test_draw_top_markers_ladder_includes_E_label():
     elements = [{"kind": "ladder", "x": 0, "y": 0, "z": 0, "label": "E"}]
     svg = _draw_top_markers(_identity_transform(), elements)
-    assert ">E<" in svg
+    # Numeración secuencial por tipo: primera escalera → E1
+    assert ">E1<" in svg
     assert _MARKER_STYLE["ladder"][0] in svg
 
 
@@ -152,11 +154,12 @@ def test_draw_top_markers_multiple_elements():
         {"kind": "tie",      "x": 4, "y": 4, "z": 0, "label": ""},
     ]
     svg = _draw_top_markers(_identity_transform(), elements)
-    # Plank no se dibuja como marker (es línea discontinua, no marker).
-    # trapdoor + ladder = 2 rects; tie = 1 polygon; 2 textos (T y E)
+    # Plank no se dibuja como marker (es línea discontinua).
+    # trapdoor + ladder = 2 rects; tie = 1 polygon.
+    # Textos: T1 (trapdoor), E1 (ladder), A1 (tie ahora etiquetado) = 3 textos
     assert svg.count("<rect") == 2
     assert svg.count("<polygon") == 1
-    assert svg.count("<text") == 2
+    assert svg.count("<text") == 3
 
 
 def test_draw_top_markers_position_uses_transform():

@@ -147,7 +147,13 @@ def is_structural_object_name(name: str) -> bool:
 
 def category_for_name(name: str) -> str | None:
     """Devuelve la categoría a la que pertenece un objeto por su nombre,
-    o None si no es estructural ni clasificable."""
+    o None si no es estructural ni clasificable.
+
+    Si el nombre lleva prefijo de tramo (T0_, T1_, …) se strip-ea antes de
+    clasificar — los andamios escalonados generan objetos con esos prefijos
+    para evitar colisiones, pero el BOM debe reconocerlos igual."""
+    import re as _re
+    name = _re.sub(r"^T\d+_", "", name)
     if not is_structural_object_name(name):
         return None
     # Excluir piezas accesorias (rosetas, bisagras, etc.)

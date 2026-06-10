@@ -101,10 +101,14 @@ def _count_structural_objects(scene) -> int:
     if root is None:
         return 0
     n = 0
+    import re as _re
     for obj in root.all_objects:
         if obj.type != "MESH":
             continue
-        if any(obj.name.startswith(p) for p in _STRUCTURAL_PREFIXES):
+        # Strip prefijo de tramo (T0_, T1_…) antes de clasificar — los
+        # andamios escalonados usan esos prefijos para evitar colisiones.
+        clean = _re.sub(r"^T\d+_", "", obj.name)
+        if any(clean.startswith(p) for p in _STRUCTURAL_PREFIXES):
             n += 1
     return n
 
@@ -326,7 +330,13 @@ class ANDAMIOS_OT_calc_run(Operator):
             scene["calc_defl_worst_node_y"] = float(wn.y)
             scene["calc_defl_worst_node_z"] = float(wn.z)
 
-        bl_severity = {"ok": 'INFO', "warning": 'WARNING', "fail": 'ERROR'}
+        # Notar: `fail` se mapea a WARNING, NO ERROR. Un modelo que no
+        # cumple normativa es un RESULTADO válido del cálculo, no un fallo del
+        # cálculo en sí. ERROR provocaba RuntimeError desde Python al invocar
+        # `bpy.ops.andamios.calc_run()`, rompiendo flujos automatizados.
+        # ERROR queda reservado para excepciones reales del solver (lanzadas
+        # en `_build_and_solve` y capturadas más arriba).
+        bl_severity = {"ok": 'INFO', "warning": 'WARNING', "fail": 'WARNING'}
         msg = (
             f"{status['title']} · util max {status['worst']:.3f}"
             f" · δ_max {defl_info['worst_disp_m']*1000:.1f} mm"
@@ -664,6 +674,13 @@ class ANDAMIOS_OT_calc_cad_export(Operator):
         validation = cad_plan.build_validation_summary(scene)
         func_elems = cad_plan.extract_functional_elements_3d(scene)
 
+        # Catálogo modular activo (multi-fabricante): las cotas del plano
+        # snapean a las longitudes del sistema elegido, no siempre a Layher.
+        from . import catalogs
+        props = getattr(scene, "andamios_props", None)
+        bay_steps = catalogs.bay_lengths(
+            getattr(props, "bay_length_catalog", "LAYHER") if props else "LAYHER")
+
         # path_points 3D para particionar en hojas tramo si la polilínea
         # tiene >= 2 segmentos rectos. Reusa extract_reference_points_3d.
         sheets = cad_plan.generate_cad_sheets(
@@ -679,6 +696,7 @@ class ANDAMIOS_OT_calc_cad_export(Operator):
             validation=validation,
             path_points_3d=ref_points,
             functional_elements_3d=func_elems,
+            bay_steps_m=bay_steps,
         )
         html_doc = cad_plan.wrap_sheets_in_html(
             sheets, paper="A3", orientation="landscape",
@@ -835,8 +853,9 @@ class ANDAMIOS_OT_calc_report(Operator):
             screenshots=screenshots,
             overview_screenshots=overview_screenshots,
         )
+        n_total_imgs = len(screenshots) + len(overview_screenshots)
         self.report({'INFO'},
-                    f"Informe escrito en {path} ({len(screenshots)} imágenes)")
+                    f"Informe escrito en {path} ({n_total_imgs} imágenes)")
         return {'FINISHED'}
 
     def invoke(self, context, event):

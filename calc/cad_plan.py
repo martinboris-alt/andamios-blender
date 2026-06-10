@@ -34,6 +34,47 @@ PAPER_SIZES_MM = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Estilo normativo (UNE-EN ISO 128-20 anchos · ISO 129-1 cotas · ISO 5455 escalas)
+# ---------------------------------------------------------------------------
+# Anchos de línea en mm (cuantizados a los valores normativos). Cualquier
+# valor float intermedio que aparezca en el SVG indica un cálculo perdido
+# que deberíamos redondear aquí.
+SW_DIM = 0.18         # cotas y líneas auxiliares
+SW_THIN = 0.25        # secundario fino
+SW_MEDIUM = 0.35      # plataformas, barandillas, diagonales
+SW_THICK = 0.50       # contorno principal (montantes / postes)
+
+# Tamaños de fuente en mm de papel (mínimo legible ISO 129-1 §7: 2.5 mm).
+# Cualquier texto < FONT_DIM se sube a FONT_DIM automáticamente.
+FONT_DIM = 2.5        # cifras de cota — el más pequeño legible
+FONT_LABEL = 2.8      # etiquetas BOM, cajetín de valor, escala
+FONT_AXIS = 3.0       # etiquetas de eje (A,B,C / 1,2,3) y subtítulos
+FONT_TITLE_SM = 3.5   # títulos de vista
+FONT_TITLE = 4.5      # título principal del plano
+
+# Paleta normativa (4 colores estructurales + marcadores funcionales)
+COLOR_OUTLINE = "#000000"     # contornos principales
+COLOR_DIM = "#0a3055"         # cotas
+COLOR_AUX = "#666666"         # líneas auxiliares, separadores, microtexto
+COLOR_WARN = "#d04040"        # avisos / errores
+# Marcadores funcionales — solo para markers de plataforma/escalera/etc.
+COLOR_TRAPDOOR = "#992222"
+COLOR_LADDER = "#a06030"
+COLOR_TIE = "#30a050"
+
+
+def _quantize_sw(width: float) -> float:
+    """Redondea cualquier ancho de línea al valor normativo más cercano."""
+    targets = (SW_DIM, SW_THIN, SW_MEDIUM, SW_THICK)
+    return min(targets, key=lambda t: abs(t - width))
+
+
+def _quantize_font(size: float) -> float:
+    """Sube cualquier tamaño < FONT_DIM al mínimo legible. Resto inalterado."""
+    return max(FONT_DIM, size)
+
+
 def paper_dims(paper: str = "A3", orientation: str = "landscape") -> tuple[float, float]:
     short, long = PAPER_SIZES_MM[paper]
     return (long, short) if orientation == "landscape" else (short, long)
@@ -44,16 +85,16 @@ def paper_dims(paper: str = "A3", orientation: str = "landscape") -> tuple[float
 # ---------------------------------------------------------------------------
 
 _CATEGORY_STROKES: dict[str, tuple[str, float, str | None]] = {
-    "pole":         ("#000000", 0.8,  None),
-    "ledger_floor": ("#000000", 0.6,  None),
-    "ledger_rail":  ("#666666", 0.35, None),
-    "toe":          ("#888888", 0.3,  None),
-    "brace":        ("#0a3055", 0.55, None),
-    "tie":          ("#992222", 0.55, None),
-    "husillo":      ("#000000", 0.5,  None),
+    "pole":         (COLOR_OUTLINE,  SW_THICK,  None),
+    "ledger_floor": (COLOR_OUTLINE,  SW_MEDIUM, None),
+    "ledger_rail":  (COLOR_AUX,      SW_MEDIUM, None),
+    "toe":          (COLOR_AUX,      SW_THIN,   None),
+    "brace":        (COLOR_DIM,      SW_MEDIUM, None),
+    "tie":          (COLOR_TIE,      SW_MEDIUM, None),
+    "husillo":      (COLOR_OUTLINE,  SW_THICK,  None),
     # Bandeja: línea discontinua marrón a la altura del deck — diferente
     # a los travesaños para no confundirse al leer el alzado/planta.
-    "plank":        ("#a06030", 0.4,  "1.6,1.0"),
+    "plank":        (COLOR_LADDER,   SW_MEDIUM, "1.6,1.0"),
 }
 
 # Categorías que NO se extraen como línea de andamio:
@@ -142,24 +183,27 @@ def _esc(s: object) -> str:
     return _html.escape(str(s))
 
 
-def _svg_line(p1, p2, stroke="#000", width=0.3, dash=None) -> str:
+def _svg_line(p1, p2, stroke=COLOR_OUTLINE, width=SW_THIN, dash=None) -> str:
+    w = _quantize_sw(width)
     extra = f' stroke-dasharray="{dash}"' if dash else ""
     return (f'<line x1="{p1[0]:.2f}" y1="{p1[1]:.2f}" '
             f'x2="{p2[0]:.2f}" y2="{p2[1]:.2f}" '
-            f'stroke="{stroke}" stroke-width="{width}"{extra} />')
+            f'stroke="{stroke}" stroke-width="{w}"{extra} />')
 
 
-def _svg_text(x, y, text, *, font_size=3.0, anchor="middle", weight="normal",
-              color="#000") -> str:
+def _svg_text(x, y, text, *, font_size=FONT_AXIS, anchor="middle", weight="normal",
+              color=COLOR_OUTLINE) -> str:
+    fs = _quantize_font(font_size)
     return (f'<text x="{x:.2f}" y="{y:.2f}" '
-            f'font-size="{font_size}" text-anchor="{anchor}" '
+            f'font-size="{fs}" text-anchor="{anchor}" '
             f'fill="{color}" font-weight="{weight}">'
             f'{_esc(text)}</text>')
 
 
-def _svg_rect(x, y, w, h, *, stroke="#000", width=0.3, fill="none") -> str:
+def _svg_rect(x, y, w, h, *, stroke=COLOR_OUTLINE, width=SW_THIN, fill="none") -> str:
+    sw = _quantize_sw(width)
     return (f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" '
-            f'fill="{fill}" stroke="{stroke}" stroke-width="{width}" />')
+            f'fill="{fill}" stroke="{stroke}" stroke-width="{sw}" />')
 
 
 def _format_mm(distance_m: float) -> str:
@@ -171,7 +215,7 @@ def _format_mm(distance_m: float) -> str:
     return f"{mm:.1f} mm"
 
 
-def _dim_line_h(x1, x2, y, label, *, font_size=2.8, stroke="#0a3055",
+def _dim_line_h(x1, x2, y, label, *, font_size=FONT_LABEL, stroke=COLOR_DIM,
                 ext_above=0.0) -> str:
     """Cota horizontal entre x1 y x2 a la altura y, con etiqueta en el centro.
     Dibuja flechas en los extremos y línea horizontal. `ext_above` añade
@@ -196,7 +240,7 @@ def _dim_line_h(x1, x2, y, label, *, font_size=2.8, stroke="#0a3055",
     return "\n".join(parts)
 
 
-def _dim_line_v(x, y1, y2, label, *, font_size=2.8, stroke="#0a3055",
+def _dim_line_v(x, y1, y2, label, *, font_size=FONT_LABEL, stroke=COLOR_DIM,
                 ext_right=0.0) -> str:
     if y1 > y2:
         y1, y2 = y2, y1
@@ -224,7 +268,7 @@ def _dim_line_v(x, y1, y2, label, *, font_size=2.8, stroke="#0a3055",
 def _chain_dim_h(svg_xs: list[float], y_dim: float, *,
                  segment_labels: list[str] | None = None,
                  font_size: float = 2.4,
-                 stroke: str = "#0a3055",
+                 stroke: str = COLOR_DIM,
                  ext_above: float = 4.0) -> str:
     """Cadena de cotas horizontales entre puntos consecutivos en `svg_xs`.
 
@@ -267,7 +311,7 @@ def _chain_dim_h(svg_xs: list[float], y_dim: float, *,
 def _chain_dim_v(svg_ys: list[float], x_dim: float, *,
                  segment_labels: list[str] | None = None,
                  font_size: float = 2.4,
-                 stroke: str = "#0a3055",
+                 stroke: str = COLOR_DIM,
                  ext_left: float = 4.0) -> str:
     """Cadena de cotas verticales entre puntos consecutivos."""
     if len(svg_ys) < 2:
@@ -360,21 +404,21 @@ def _title_block(
 
     # Fila 1: Proyecto / Empresa (split a la mitad)
     parts.append(_svg_line((x + w*0.6, r1_y), (x + w*0.6, r1_y + r1_h), width=0.3))
-    parts.append(_svg_text(x + 1.5, r1_y + 2.6, "PROYECTO", font_size=1.8,
-                           anchor="start", color="#666"))
+    parts.append(_svg_text(x + 1.5, r1_y + 2.6, "PROYECTO", font_size=FONT_DIM,
+                           anchor="start", color=COLOR_AUX))
     parts.append(_svg_text(x + 1.5, r1_y + r1_h - 0.8, project_name,
-                           font_size=3.0, anchor="start", weight="600"))
+                           font_size=FONT_AXIS, anchor="start", weight="600"))
     parts.append(_svg_text(x + w*0.6 + 1.5, r1_y + 2.6, "EMPRESA",
-                           font_size=1.8, anchor="start", color="#666"))
+                           font_size=FONT_DIM, anchor="start", color=COLOR_AUX))
     parts.append(_svg_text(x + w*0.6 + 1.5, r1_y + r1_h - 0.8,
-                           "Andamios Addon", font_size=3.0,
+                           "Andamios Addon", font_size=FONT_AXIS,
                            anchor="start", weight="600"))
 
     # Fila 2: Título del plano
     parts.append(_svg_text(x + 1.5, r2_y + 2.6, "TÍTULO DEL PLANO",
-                           font_size=1.8, anchor="start", color="#666"))
+                           font_size=FONT_DIM, anchor="start", color=COLOR_AUX))
     parts.append(_svg_text(x + w/2, r2_y + r2_h - 1, drawing_title,
-                           font_size=4.5, anchor="middle", weight="700"))
+                           font_size=FONT_TITLE, anchor="middle", weight="700"))
 
     # Fila 3: Fecha / Escala / Autor / Revisión (cuatro celdas)
     qw = w / 4
@@ -388,16 +432,16 @@ def _title_block(
     ]
     for i, (lbl, val) in enumerate(cells_3):
         cx = x + i*qw
-        parts.append(_svg_text(cx + 1.0, r3_y + 2.0, lbl, font_size=1.7,
-                               anchor="start", color="#666"))
+        parts.append(_svg_text(cx + 1.0, r3_y + 2.0, lbl, font_size=FONT_DIM,
+                               anchor="start", color=COLOR_AUX))
         parts.append(_svg_text(cx + qw/2, r3_y + r3_h - 1, val,
-                               font_size=3.0, anchor="middle", weight="500"))
+                               font_size=FONT_AXIS, anchor="middle", weight="500"))
 
     # Fila 4: Material (full width)
-    parts.append(_svg_text(x + 1.5, r4_y + 2.0, "MATERIAL", font_size=1.7,
-                           anchor="start", color="#666"))
+    parts.append(_svg_text(x + 1.5, r4_y + 2.0, "MATERIAL", font_size=FONT_DIM,
+                           anchor="start", color=COLOR_AUX))
     parts.append(_svg_text(x + w/2, r4_y + r4_h - 1, material,
-                           font_size=2.8, anchor="middle"))
+                           font_size=FONT_LABEL, anchor="middle"))
 
     # Fila 5: Peso / Piezas / Hoja / Papel
     for i in range(1, 4):
@@ -410,10 +454,10 @@ def _title_block(
     ]
     for i, (lbl, val) in enumerate(cells_5):
         cx = x + i*qw
-        parts.append(_svg_text(cx + 1.0, r5_y + 1.8, lbl, font_size=1.6,
-                               anchor="start", color="#666"))
+        parts.append(_svg_text(cx + 1.0, r5_y + 1.8, lbl, font_size=FONT_DIM,
+                               anchor="start", color=COLOR_AUX))
         parts.append(_svg_text(cx + qw/2, r5_y + r5_h - 0.8, val,
-                               font_size=2.6, anchor="middle"))
+                               font_size=FONT_LABEL, anchor="middle"))
 
     # Fila 6: validación estructural (si hay datos) o firma
     if validation:
@@ -442,18 +486,18 @@ def _title_block(
         status_text = validation.get("status_text", "")
         details = validation.get("details", "")
         parts.append(_svg_text(x + 1.5, r6_y + r6_h * 0.55, status_text,
-                               font_size=2.6, anchor="start", weight="700",
+                               font_size=FONT_LABEL, anchor="start", weight="700",
                                color=text_color))
         parts.append(_svg_text(x + w - 1.5, r6_y + r6_h * 0.55, details,
-                               font_size=2.0, anchor="end",
+                               font_size=FONT_DIM, anchor="end",
                                color=text_color))
         parts.append(_svg_text(x + w/2, r6_y + r6_h - 0.6,
                                "VALIDACIÓN ESTRUCTURAL · EN 1993-1-1 + EN 12811-1",
-                               font_size=1.5, anchor="middle", color="#666"))
+                               font_size=FONT_DIM, anchor="middle", color=COLOR_AUX))
     else:
         parts.append(_svg_text(x + w/2, r6_y + r6_h - 0.8,
                                "Generado automáticamente · Andamios Addon FEM",
-                               font_size=1.8, anchor="middle", color="#666"))
+                               font_size=FONT_DIM, anchor="middle", color=COLOR_AUX))
 
     return "\n".join(parts)
 
@@ -473,7 +517,7 @@ def _bom_table(
     title_h = 5
     parts.append(_svg_line((x, y + title_h), (x + w, y + title_h), width=0.4))
     parts.append(_svg_text(x + w/2, y + title_h - 1, "LISTA DE MATERIALES",
-                           font_size=2.8, anchor="middle", weight="700"))
+                           font_size=FONT_LABEL, anchor="middle", weight="700"))
 
     # Cabecera tabla
     rows = list(summary.get("by_category", []))
@@ -494,7 +538,7 @@ def _bom_table(
     for i, hdr in enumerate(headers):
         parts.append(_svg_text(
             (col_x[i] + col_x[i+1]) / 2, hdr_y + row_h - 1, hdr,
-            font_size=2.2, weight="600", color="#444",
+            font_size=FONT_DIM, weight="600", color=COLOR_AUX,
         ))
 
     # Líneas verticales entre columnas
@@ -508,33 +552,33 @@ def _bom_table(
         parts.append(_svg_line((x, cy), (x + w, cy), width=0.15))
         # Categoría
         parts.append(_svg_text(col_x[0] + 1.0, cy - 1, entry["label"],
-                               font_size=2.2, anchor="start"))
+                               font_size=FONT_DIM, anchor="start"))
         # Cantidad
         parts.append(_svg_text((col_x[1]+col_x[2])/2, cy - 1,
-                               str(entry["count"]), font_size=2.2))
+                               str(entry["count"]), font_size=FONT_DIM))
         # Tubo (m)
         tube_m = entry.get("tube_length_m", 0.0)
         parts.append(_svg_text((col_x[2]+col_x[3])/2, cy - 1,
                                f"{tube_m:.1f}" if tube_m else "—",
-                               font_size=2.2))
+                               font_size=FONT_DIM))
         # Peso
         parts.append(_svg_text((col_x[3]+col_x[4])/2, cy - 1,
-                               f"{entry['weight_kg']:.1f}", font_size=2.2))
+                               f"{entry['weight_kg']:.1f}", font_size=FONT_DIM))
 
     # Fila TOTAL
     cy += row_h
     parts.append(_svg_line((x, cy - row_h), (x + w, cy - row_h), width=0.4))
     parts.append(_svg_text(col_x[0] + 1.0, cy - 1, "TOTAL",
-                           font_size=2.4, anchor="start", weight="700"))
+                           font_size=FONT_DIM, anchor="start", weight="700"))
     parts.append(_svg_text((col_x[1]+col_x[2])/2, cy - 1,
                            str(summary.get("total_pieces", 0)),
-                           font_size=2.4, weight="700"))
+                           font_size=FONT_DIM, weight="700"))
     parts.append(_svg_text((col_x[2]+col_x[3])/2, cy - 1,
                            f"{summary.get('total_tube_length_m', 0):.1f}",
-                           font_size=2.4, weight="700"))
+                           font_size=FONT_DIM, weight="700"))
     parts.append(_svg_text((col_x[3]+col_x[4])/2, cy - 1,
                            f"{summary.get('total_weight_kg', 0):.1f}",
-                           font_size=2.4, weight="700"))
+                           font_size=FONT_DIM, weight="700"))
 
     return "\n".join(parts)
 
@@ -549,18 +593,24 @@ def _draw_dim_chain(
     groups: list,
     *,
     font_size: float = 2.5,
-    stroke: str = "#0a3055",
+    stroke: str = COLOR_DIM,
     ext_above: float = 4.0,
     horizontal: bool = True,
+    skip_compensators: bool = True,
 ) -> str:
-    """Dibuja una cadena de cotas con notación N×L=T y compensadores marcados.
+    """Dibuja la cadena A EJES con notación N×L=T.
 
     `svg_xs` lista de coordenadas SVG de cada montante (n+1 valores para
     n segmentos). `groups` lista de ChainGroup (cad_dim) — su orden debe
     coincidir con los segmentos entre xs consecutivos.
+
+    Si `skip_compensators=True` (default por ISO 129-1 §6.3 jerarquía),
+    los compensadores se omiten aquí — irán en la cadena PARCIAL. Sólo
+    si TODOS los grupos son compensadores se dibujan como fallback.
     """
     if len(svg_xs) < 2 or not groups:
         return ""
+    only_comps = all(g.is_compensator for g in groups)
     parts: list[str] = []
     arrow = 1.2
     # Líneas auxiliares verticales (extension lines)
@@ -574,6 +624,9 @@ def _draw_dim_chain(
         n_seg = g.n
         if seg_idx + n_seg > len(svg_xs) - 1:
             break
+        if g.is_compensator and skip_compensators and not only_comps:
+            seg_idx += n_seg
+            continue
         x1 = svg_xs[seg_idx]
         x2 = svg_xs[seg_idx + n_seg]
         if x1 > x2:
@@ -591,17 +644,63 @@ def _draw_dim_chain(
             f'{x2-arrow:.2f},{y_dim-arrow*0.4:.2f} '
             f'{x2-arrow:.2f},{y_dim+arrow*0.4:.2f}" fill="{stroke}" />'
         )
-        # Etiqueta — compensadores en color rojo apagado para distinguir
-        label_color = "#9b2226" if g.is_compensator else stroke
+        label_color = COLOR_WARN if g.is_compensator else stroke
         label_weight = "700" if g.is_compensator else "600"
         parts.append(_svg_text((x1+x2)/2, y_dim - 0.8, g.label(),
                                font_size=font_size, color=label_color,
                                weight=label_weight))
-        if g.is_compensator:
-            # Anotación pequeña debajo
-            parts.append(_svg_text((x1+x2)/2, y_dim + 2.5,
-                                   "compens.", font_size=1.7,
-                                   color=label_color))
+        seg_idx += n_seg
+    return "\n".join(parts)
+
+
+def _draw_dim_partial_h(
+    svg_xs: list[float],
+    y_dim: float,
+    groups: list,
+    *,
+    font_size: float = FONT_DIM,
+    ext_above: float = 4.0,
+) -> str:
+    """Cadena PARCIAL: SÓLO los segmentos compensadores (piezas singulares).
+    Cada uno con su cota individual en color de aviso. La extension line
+    arriba se dibuja sólo para los extremos del compensador, no para todos
+    los nodos (la cadena PARCIAL no es continua)."""
+    if len(svg_xs) < 2 or not groups:
+        return ""
+    parts: list[str] = []
+    arrow = 1.2
+    seg_idx = 0
+    for g in groups:
+        n_seg = g.n
+        if seg_idx + n_seg > len(svg_xs) - 1:
+            break
+        if not g.is_compensator:
+            seg_idx += n_seg
+            continue
+        x1 = svg_xs[seg_idx]
+        x2 = svg_xs[seg_idx + n_seg]
+        if x1 > x2:
+            x1, x2 = x2, x1
+        # Extension lines locales del segmento
+        for x in (x1, x2):
+            parts.append(_svg_line((x, y_dim - ext_above), (x, y_dim + 0.5),
+                                   stroke=COLOR_WARN, width=0.18))
+        parts.append(_svg_line((x1, y_dim), (x2, y_dim),
+                               stroke=COLOR_WARN, width=0.22))
+        parts.append(
+            f'<polygon points="{x1:.2f},{y_dim:.2f} '
+            f'{x1+arrow:.2f},{y_dim-arrow*0.4:.2f} '
+            f'{x1+arrow:.2f},{y_dim+arrow*0.4:.2f}" fill="{COLOR_WARN}" />'
+        )
+        parts.append(
+            f'<polygon points="{x2:.2f},{y_dim:.2f} '
+            f'{x2-arrow:.2f},{y_dim-arrow*0.4:.2f} '
+            f'{x2-arrow:.2f},{y_dim+arrow*0.4:.2f}" fill="{COLOR_WARN}" />'
+        )
+        parts.append(_svg_text((x1+x2)/2, y_dim - 0.8,
+                               f"{g.segment_label_mm} compens.",
+                               font_size=font_size, color=COLOR_WARN,
+                               weight="700"))
         seg_idx += n_seg
     return "\n".join(parts)
 
@@ -615,11 +714,11 @@ def _draw_axis_labels(
     for x, lab in zip(svg_xs, labels):
         parts.append(
             f'<circle cx="{x:.2f}" cy="{y_pos:.2f}" r="{radius:.2f}" '
-            f'fill="white" stroke="#0a3055" stroke-width="0.4" />'
+            f'fill="white" stroke="{COLOR_DIM}" stroke-width="0.35" />'
         )
         parts.append(_svg_text(x, y_pos + radius * 0.4, lab,
-                               font_size=3.0, weight="700",
-                               color="#0a3055"))
+                               font_size=FONT_AXIS, weight="700",
+                               color=COLOR_DIM))
     return "\n".join(parts)
 
 
@@ -673,12 +772,12 @@ def _draw_view(
     parts = [_svg_rect(rx, ry, rw, rh, width=0.4)]
     # Título de la vista (≥ 5 mm en papel)
     parts.append(_svg_text(rx + 2, ry + 5, view_label,
-                           font_size=4.5, anchor="start", weight="700",
-                           color="#0a3055"))
+                           font_size=FONT_TITLE, anchor="start", weight="700",
+                           color=COLOR_DIM))
 
     if not lines_2d:
         parts.append(_svg_text(rx + rw/2, ry + rh/2,
-                               "(sin datos)", font_size=3, color="#888"))
+                               "(sin datos)", font_size=3, color=COLOR_AUX))
         return "\n".join(parts), 1.0, 100, None
 
     bmin, bmax = bbox_of_lines(lines_2d)
@@ -723,7 +822,7 @@ def _draw_view(
     # Líneas del andamio
     for ln in lines_2d:
         p1, p2, cat = ln[0], ln[1], ln[2]
-        stroke, width, dash = _CATEGORY_STROKES.get(cat, ("#444", 0.4, None))
+        stroke, width, dash = _CATEGORY_STROKES.get(cat, (COLOR_AUX, SW_MEDIUM, None))
         a = project_world_to_svg(p1, transform)
         b = project_world_to_svg(p2, transform)
         parts.append(_svg_line(a, b, stroke=stroke, width=width, dash=dash))
@@ -733,7 +832,7 @@ def _draw_view(
         a_min = project_world_to_svg(bmin, transform)
         a_max = project_world_to_svg(bmax, transform)
 
-        # ---- Eje X (cadena horizontal abajo) ----
+        # ---- Eje X (cadena horizontal abajo) — 3 cadenas jerárquicas ISO 129-1 ----
         if chain_dim_x and len(chain_dim_x) >= 2:
             spec_x = prepare_dimension_chain(
                 chain_dim_x,
@@ -741,17 +840,23 @@ def _draw_view(
             )
             xs_svg = [project_world_to_svg((c, 0), transform)[0]
                       for c in spec_x.coords_m]
-            # Cadena A EJES — 8 mm bajo el bbox (≥ ISO ext mínima)
-            chain_y = a_min[1] + 8
+            # PARCIAL — la más cerca del dibujo (sólo compensadores)
+            partial_y = a_min[1] + 5
+            if spec_x.has_compensators:
+                parts.append(_draw_dim_partial_h(
+                    xs_svg, partial_y, spec_x.groups, font_size=FONT_DIM,
+                ))
+            # A EJES — intermedia, separación ≥ 7 mm (ISO 129-1 §5.4)
+            chain_y = partial_y + 8 if spec_x.has_compensators else a_min[1] + 8
             parts.append(_draw_dim_chain(
-                xs_svg, chain_y, spec_x.groups, font_size=3.0,
+                xs_svg, chain_y, spec_x.groups, font_size=FONT_AXIS,
             ))
-            # Cota TOTAL — 9 mm más abajo (separación ≥ 7 mm ISO 129-1 §5.4)
+            # TOTAL — la más alejada del dibujo
             total_y = chain_y + 10
             parts.append(_dim_line_h(
                 a_min[0], a_max[0], total_y,
                 f"{spec_x.total_mm} mm",
-                font_size=3.5, ext_above=2.0,
+                font_size=FONT_TITLE_SM, ext_above=2.0,
             ))
             # Globos de eje encima del dibujo (en el TOP_MARGIN)
             if axes_x_labels and len(axes_x_labels) == len(xs_svg):
@@ -760,7 +865,7 @@ def _draw_view(
                     xs_svg, axes_y, axes_x_labels, radius=2.8,
                 ))
 
-        # ---- Eje Y (cadena vertical a la izquierda) ----
+        # ---- Eje Y (cadena vertical a la izquierda) — 3 cadenas ISO 129-1 ----
         if chain_dim_y and len(chain_dim_y) >= 2:
             spec_y = prepare_dimension_chain(
                 chain_dim_y,
@@ -768,17 +873,23 @@ def _draw_view(
             )
             ys_svg = [project_world_to_svg((0, c), transform)[1]
                       for c in spec_y.coords_m]
-            # Cadena A EJES — 8 mm a la izquierda del bbox
-            chain_x = a_min[0] - 8
+            # PARCIAL — la más cerca del dibujo (sólo compensadores)
+            partial_x = a_min[0] - 5
+            if spec_y.has_compensators:
+                parts.append(_draw_dim_partial_v(
+                    ys_svg, partial_x, spec_y.groups, font_size=FONT_DIM,
+                ))
+            # A EJES — intermedia
+            chain_x = partial_x - 8 if spec_y.has_compensators else a_min[0] - 8
             parts.append(_draw_dim_chain_v(
-                ys_svg, chain_x, spec_y.groups, font_size=3.0,
+                ys_svg, chain_x, spec_y.groups, font_size=FONT_AXIS,
             ))
-            # Cota TOTAL
+            # TOTAL — la más alejada
             total_x = chain_x - 10
             parts.append(_dim_line_v(
                 total_x, a_min[1], a_max[1],
                 f"{spec_y.total_mm} mm",
-                font_size=3.5, ext_right=2.0,
+                font_size=FONT_TITLE_SM, ext_right=2.0,
             ))
             # Globos eje Y a la izquierda del total
             if axes_y_labels and len(axes_y_labels) == len(ys_svg):
@@ -786,17 +897,17 @@ def _draw_view(
                 for y, lab in zip(ys_svg, axes_y_labels):
                     parts.append(
                         f'<circle cx="{axes_x:.2f}" cy="{y:.2f}" r="2.8" '
-                        f'fill="white" stroke="#0a3055" stroke-width="0.4" />'
+                        f'fill="white" stroke="{COLOR_DIM}" stroke-width="0.35" />'
                     )
                     parts.append(_svg_text(axes_x, y + 1.0, lab,
                                            font_size=2.5, weight="700",
-                                           color="#0a3055"))
+                                           color=COLOR_DIM))
 
     # Etiqueta de escala dentro de la vista (esquina superior derecha)
     parts.append(_svg_text(rx + rw - 2, ry + 4,
                            f"Esc. 1:{scale_denom}",
-                           font_size=2.8, anchor="end",
-                           color="#444"))
+                           font_size=FONT_LABEL, anchor="end",
+                           color=COLOR_AUX))
 
     return "\n".join(parts), mm_per_m, scale_denom, transform
 
@@ -807,16 +918,18 @@ def _draw_dim_chain_v(
     groups: list,
     *,
     font_size: float = 2.5,
-    stroke: str = "#0a3055",
+    stroke: str = COLOR_DIM,
     ext_left: float = 4.0,
+    skip_compensators: bool = True,
 ) -> str:
-    """Versión vertical de _draw_dim_chain — texto rotado para lectura
-    desde la derecha del plano."""
+    """Versión vertical de _draw_dim_chain — cadena A EJES con texto rotado
+    para lectura desde la derecha del plano. Compensadores se omiten salvo
+    si todos lo son (fallback)."""
     if len(svg_ys) < 2 or not groups:
         return ""
+    only_comps = all(g.is_compensator for g in groups)
     parts: list[str] = []
     arrow = 1.2
-    # Extension lines
     for y in svg_ys:
         parts.append(_svg_line((x_dim - 0.5, y), (x_dim + ext_left, y),
                                stroke=stroke, width=0.18))
@@ -825,6 +938,9 @@ def _draw_dim_chain_v(
         n_seg = g.n
         if seg_idx + n_seg > len(svg_ys) - 1:
             break
+        if g.is_compensator and skip_compensators and not only_comps:
+            seg_idx += n_seg
+            continue
         y1 = svg_ys[seg_idx]
         y2 = svg_ys[seg_idx + n_seg]
         if y1 > y2:
@@ -842,7 +958,7 @@ def _draw_dim_chain_v(
             f'{x_dim+arrow*0.4:.2f},{y2-arrow:.2f}" fill="{stroke}" />'
         )
         cy = (y1 + y2) / 2
-        label_color = "#9b2226" if g.is_compensator else stroke
+        label_color = COLOR_WARN if g.is_compensator else stroke
         label_weight = "700" if g.is_compensator else "600"
         parts.append(
             f'<text x="{x_dim-1.0:.2f}" y="{cy:.2f}" '
@@ -850,6 +966,58 @@ def _draw_dim_chain_v(
             f'fill="{label_color}" font-weight="{label_weight}" '
             f'transform="rotate(-90 {x_dim-1.0:.2f} {cy:.2f})">'
             f'{_esc(g.label())}</text>'
+        )
+        seg_idx += n_seg
+    return "\n".join(parts)
+
+
+def _draw_dim_partial_v(
+    svg_ys: list[float],
+    x_dim: float,
+    groups: list,
+    *,
+    font_size: float = FONT_DIM,
+    ext_left: float = 4.0,
+) -> str:
+    """Cadena PARCIAL vertical: SÓLO compensadores."""
+    if len(svg_ys) < 2 or not groups:
+        return ""
+    parts: list[str] = []
+    arrow = 1.2
+    seg_idx = 0
+    for g in groups:
+        n_seg = g.n
+        if seg_idx + n_seg > len(svg_ys) - 1:
+            break
+        if not g.is_compensator:
+            seg_idx += n_seg
+            continue
+        y1 = svg_ys[seg_idx]
+        y2 = svg_ys[seg_idx + n_seg]
+        if y1 > y2:
+            y1, y2 = y2, y1
+        for y in (y1, y2):
+            parts.append(_svg_line((x_dim - 0.5, y), (x_dim + ext_left, y),
+                                   stroke=COLOR_WARN, width=0.18))
+        parts.append(_svg_line((x_dim, y1), (x_dim, y2),
+                               stroke=COLOR_WARN, width=0.22))
+        parts.append(
+            f'<polygon points="{x_dim:.2f},{y1:.2f} '
+            f'{x_dim-arrow*0.4:.2f},{y1+arrow:.2f} '
+            f'{x_dim+arrow*0.4:.2f},{y1+arrow:.2f}" fill="{COLOR_WARN}" />'
+        )
+        parts.append(
+            f'<polygon points="{x_dim:.2f},{y2:.2f} '
+            f'{x_dim-arrow*0.4:.2f},{y2-arrow:.2f} '
+            f'{x_dim+arrow*0.4:.2f},{y2-arrow:.2f}" fill="{COLOR_WARN}" />'
+        )
+        cy = (y1 + y2) / 2
+        parts.append(
+            f'<text x="{x_dim-1.0:.2f}" y="{cy:.2f}" '
+            f'font-size="{font_size}" text-anchor="middle" '
+            f'fill="{COLOR_WARN}" font-weight="700" '
+            f'transform="rotate(-90 {x_dim-1.0:.2f} {cy:.2f})">'
+            f'{_esc(str(g.segment_label_mm) + " comp.")}</text>'
         )
         seg_idx += n_seg
     return "\n".join(parts)
@@ -879,15 +1047,15 @@ def _draw_iso_view(
     rx, ry, rw, rh = rect
     parts = [_svg_rect(rx, ry, rw, rh, width=0.4)]
     parts.append(_svg_text(rx + 2, ry + 5, view_label,
-                           font_size=4.5, anchor="start", weight="700",
-                           color="#0a3055"))
+                           font_size=FONT_TITLE, anchor="start", weight="700",
+                           color=COLOR_DIM))
 
     # Filtrar líneas dibujables (sólo tubos)
     drawable = [ln for ln in lines_3d
                 if ln.get("category") not in _SKIP_LINE_CATEGORIES]
     if not drawable:
         parts.append(_svg_text(rx + rw/2, ry + rh/2,
-                               "(sin datos)", font_size=3, color="#888"))
+                               "(sin datos)", font_size=3, color=COLOR_AUX))
         return "\n".join(parts)
 
     # Proyectar todos los extremos a 2D iso
@@ -914,7 +1082,7 @@ def _draw_iso_view(
                             padding_mm=2.0)
 
     for a, b, cat in iso_pairs:
-        stroke, width, dash = _CATEGORY_STROKES.get(cat, ("#444", 0.4, None))
+        stroke, width, dash = _CATEGORY_STROKES.get(cat, (COLOR_AUX, SW_MEDIUM, None))
         # Iso usa stroke ~70 % del grosor del frontal para que no compita
         a_svg = project_world_to_svg(a, transform)
         b_svg = project_world_to_svg(b, transform)
@@ -933,10 +1101,17 @@ _LEGEND_ITEMS: tuple[tuple[str, str], ...] = (
     ("ledger_floor", "Larguero / travesaño de planta"),
     ("ledger_rail",  "Barandilla / mid-rail"),
     ("brace",        "Diagonal de arriostramiento"),
-    ("tie",          "Anclaje a fachada"),
     ("toe",          "Rodapié"),
     ("plank",        "Bandeja / deck (línea discontinua)"),
     ("husillo",      "Husillo / base regulable"),
+)
+
+# Markers funcionales en planta — se dibujan con su forma propia (cuadrado /
+# rectángulo / triángulo) en lugar de una línea de muestra.
+_LEGEND_MARKER_ITEMS: tuple[tuple[str, str], ...] = (
+    ("trapdoor", "Trampilla (T1, T2 …)"),
+    ("ladder",   "Escalera de acceso (E1, E2 …)"),
+    ("tie",      "Anclaje a fachada (A1, A2 …)"),
 )
 
 
@@ -956,7 +1131,7 @@ def _draw_legend(
     title_h = 5.0
     parts.append(_svg_line((x, y + title_h), (x + w, y + title_h), width=0.3))
     parts.append(_svg_text(x + w/2, y + title_h - 1, title,
-                           font_size=2.8, anchor="middle", weight="700"))
+                           font_size=FONT_LABEL, anchor="middle", weight="700"))
 
     cy = y + title_h + 1.5
     sample_x = x + 3.0
@@ -966,13 +1141,50 @@ def _draw_legend(
     for cat, label in _LEGEND_ITEMS:
         if cy + line_h > y + h - 2:
             break
-        stroke, width, dash = _CATEGORY_STROKES.get(cat, ("#444", 0.4, None))
+        stroke, width, dash = _CATEGORY_STROKES.get(cat, (COLOR_AUX, SW_MEDIUM, None))
         parts.append(_svg_line(
             (sample_x, cy + 1.4), (sample_x + sample_w, cy + 1.4),
             stroke=stroke, width=width, dash=dash,
         ))
         parts.append(_svg_text(text_x, cy + 2.2, label,
-                               font_size=2.2, anchor="start"))
+                               font_size=FONT_DIM, anchor="start"))
+        cy += line_h
+
+    # Markers funcionales: trampilla / escalera / anclaje — dibujamos la
+    # forma exacta (cuadrado / rectángulo / triángulo) en lugar de línea
+    # para que el montador asocie el símbolo del plano con la leyenda.
+    for kind, label in _LEGEND_MARKER_ITEMS:
+        if cy + line_h > y + h - 2:
+            break
+        if kind not in _MARKER_STYLE:
+            continue
+        fill, stroke, _ = _MARKER_STYLE[kind]
+        sample_cx = sample_x + sample_w / 2
+        sample_cy = cy + 1.4
+        if kind == "trapdoor":
+            parts.append(
+                f'<rect x="{sample_cx-1.7:.2f}" y="{sample_cy-1.7:.2f}" '
+                f'width="3.4" height="3.4" '
+                f'fill="{fill}" fill-opacity="0.55" '
+                f'stroke="{stroke}" stroke-width="0.25"/>'
+            )
+        elif kind == "ladder":
+            parts.append(
+                f'<rect x="{sample_cx-2.4:.2f}" y="{sample_cy-1.3:.2f}" '
+                f'width="4.8" height="2.6" '
+                f'fill="{fill}" fill-opacity="0.4" '
+                f'stroke="{stroke}" stroke-width="0.25"/>'
+            )
+        elif kind == "tie":
+            parts.append(
+                f'<polygon points="'
+                f'{sample_cx:.2f},{sample_cy-1.8:.2f} '
+                f'{sample_cx-1.6:.2f},{sample_cy+1.0:.2f} '
+                f'{sample_cx+1.6:.2f},{sample_cy+1.0:.2f}" '
+                f'fill="{fill}" stroke="{stroke}" stroke-width="0.25"/>'
+            )
+        parts.append(_svg_text(text_x, cy + 2.2, label,
+                               font_size=FONT_DIM, anchor="start"))
         cy += line_h
 
     if segment_labels:
@@ -982,7 +1194,7 @@ def _draw_legend(
                                    (x + w - 1, cy - 0.5), width=0.2))
             parts.append(_svg_text(x + 3, cy + 2.0,
                                    "Tramos del andamio:",
-                                   font_size=2.2, anchor="start",
+                                   font_size=FONT_DIM, anchor="start",
                                    weight="600"))
             cy += line_h
             for label in segment_labels:
@@ -990,7 +1202,7 @@ def _draw_legend(
                     break
                 parts.append(_svg_text(x + 5, cy + 2.0,
                                        f"· {label}",
-                                       font_size=2.2, anchor="start"))
+                                       font_size=FONT_DIM, anchor="start"))
                 cy += line_h * 0.85
 
     return "\n".join(parts)
@@ -1007,9 +1219,9 @@ def _draw_legend(
 # trampillas y escaleras sí, porque están filtradas explícitamente
 # (sus geometrías como líneas serían confusas).
 _MARKER_STYLE: dict[str, tuple[str, str, str]] = {
-    "trapdoor":  ("#30a050", "#30a050", "T"),     # trampilla — cuadrado verde
-    "ladder":    ("#d04040", "#d04040", "E"),     # escalera — rectángulo rojo
-    "tie":       ("#992222", "#992222", ""),      # anclaje — triángulo rojo
+    "trapdoor":  (COLOR_TIE,      COLOR_TIE,      "T"),  # trampilla — verde
+    "ladder":    (COLOR_WARN,     COLOR_WARN,     "E"),  # escalera — rojo
+    "tie":       (COLOR_TRAPDOOR, COLOR_TRAPDOOR, ""),   # anclaje — granate
 }
 
 
@@ -1019,8 +1231,11 @@ def kind_for_object_name(name: str) -> str | None:
     Devuelve el kind ∈ {plank, trapdoor, ladder, tie} o None si el objeto
     no debe llevar marker (postes, ledgers, rails, husillos…).
     Sólo el `_rail_a` de las escaleras cuenta como una escalera ensamblada
-    (igual que en bom.py).
+    (igual que en bom.py). Strip prefijo de tramo (T0_, T1_…) — andamios
+    escalonados los usan.
     """
+    import re as _re
+    name = _re.sub(r"^T\d+_", "", name)
     if name.startswith("Lid_") or name.startswith("Trapdoor_"):
         return "trapdoor"
     if name.startswith("Ladder_") and name.endswith("_rail_a"):
@@ -1077,37 +1292,52 @@ def _draw_top_markers(
     elements: list[dict],
 ) -> str:
     """Pinta los markers funcionales sobre la planta usando el `transform`
-    devuelto por `_draw_view`. Si `transform` es None (vista vacía) o no
-    hay elementos, devuelve cadena vacía.
+    devuelto por `_draw_view`. Cada tipo se numera independientemente
+    (T1/T2 trampillas, E1/E2 escaleras, A1/A2 anclajes) para que el
+    montador pueda referenciarlos en BOM, especificaciones y comprobaciones.
+
+    El orden de numeración es por X mundo ascendente (replanteo de izquierda
+    a derecha, como leería el plano).
     """
     if transform is None or not elements:
         return ""
+    # Ordenar por (kind, x_world) para numeración estable y predecible
+    ordered = sorted(elements, key=lambda e: (e.get("kind", ""), e.get("x", 0.0)))
+    counters: dict[str, int] = {}
     parts: list[str] = []
-    for el in elements:
+    for el in ordered:
         x_svg, y_svg = project_world_to_svg((el["x"], el["y"]), transform)
         kind = el.get("kind", "")
         if kind not in _MARKER_STYLE:
             continue
-        fill, stroke, label = _MARKER_STYLE[kind]
+        fill, stroke, base_label = _MARKER_STYLE[kind]
+        # Asignar número secuencial por tipo
+        counters[kind] = counters.get(kind, 0) + 1
+        n = counters[kind]
+        # Etiquetas: T1, T2 / E1, E2 / A1, A2 (ties = "A" de anclaje)
+        if kind == "tie":
+            label = f"A{n}"
+        else:
+            label = f"{base_label}{n}" if base_label else f"{n}"
         if kind == "trapdoor":
             parts.append(
                 f'<rect x="{x_svg-1.7:.2f}" y="{y_svg-1.7:.2f}" '
                 f'width="3.4" height="3.4" '
                 f'fill="{fill}" fill-opacity="0.55" '
-                f'stroke="{stroke}" stroke-width="0.3"/>'
+                f'stroke="{stroke}" stroke-width="0.25"/>'
             )
             parts.append(_svg_text(x_svg, y_svg + 1.0, label,
-                                   font_size=2.4, weight="700",
+                                   font_size=FONT_DIM, weight="700",
                                    color="white"))
         elif kind == "ladder":
             parts.append(
-                f'<rect x="{x_svg-2.2:.2f}" y="{y_svg-1.2:.2f}" '
-                f'width="4.4" height="2.4" '
+                f'<rect x="{x_svg-2.4:.2f}" y="{y_svg-1.3:.2f}" '
+                f'width="4.8" height="2.6" '
                 f'fill="{fill}" fill-opacity="0.4" '
-                f'stroke="{stroke}" stroke-width="0.3"/>'
+                f'stroke="{stroke}" stroke-width="0.25"/>'
             )
-            parts.append(_svg_text(x_svg, y_svg + 0.8, label,
-                                   font_size=2.2, weight="700",
+            parts.append(_svg_text(x_svg, y_svg + 0.9, label,
+                                   font_size=FONT_DIM, weight="700",
                                    color="white"))
         elif kind == "tie":
             parts.append(
@@ -1115,8 +1345,12 @@ def _draw_top_markers(
                 f'{x_svg:.2f},{y_svg-1.8:.2f} '
                 f'{x_svg-1.6:.2f},{y_svg+1.0:.2f} '
                 f'{x_svg+1.6:.2f},{y_svg+1.0:.2f}" '
-                f'fill="{fill}" stroke="{stroke}" stroke-width="0.3"/>'
+                f'fill="{fill}" stroke="{stroke}" stroke-width="0.25"/>'
             )
+            # Etiqueta del anclaje a la derecha del triángulo
+            parts.append(_svg_text(x_svg + 2.5, y_svg + 0.5, label,
+                                   font_size=FONT_DIM, weight="700",
+                                   color=stroke, anchor="start"))
     return "\n".join(parts)
 
 
@@ -1145,7 +1379,7 @@ def _draw_north(
     r = radius_mm
     parts = [
         f'<circle cx="{cx:.2f}" cy="{cy:.2f}" r="{r:.2f}" '
-        f'fill="white" stroke="#0a3055" stroke-width="0.4"/>',
+        f'fill="white" stroke="{COLOR_DIM}" stroke-width="0.35"/>',
         # Flecha hacia arriba: vértice arriba, base ancha abajo (cuerpo
         # pintado en negro)
         f'<polygon points="'
@@ -1153,9 +1387,9 @@ def _draw_north(
         f'{cx-r*0.45:.2f},{cy+r*0.2:.2f} '
         f'{cx:.2f},{cy:.2f} '
         f'{cx+r*0.45:.2f},{cy+r*0.2:.2f}" '
-        f'fill="#0a3055" stroke="#0a3055" stroke-width="0.2"/>',
+        f'fill="{COLOR_DIM}" stroke="{COLOR_DIM}" stroke-width="0.18"/>',
         _svg_text(cx, cy + r - 1.0, "N",
-                  font_size=2.6, weight="700", color="#0a3055"),
+                  font_size=FONT_LABEL, weight="700", color=COLOR_DIM),
     ]
     return "\n".join(parts)
 
@@ -1186,12 +1420,12 @@ def _draw_tramo_labels(
             f'<rect x="{x_svg-7.0:.2f}" y="{y_svg-2.4:.2f}" '
             f'width="14.0" height="4.2" '
             f'fill="white" fill-opacity="0.88" '
-            f'stroke="#0a3055" stroke-width="0.4"/>'
+            f'stroke="{COLOR_DIM}" stroke-width="0.35"/>'
         )
         parts.append(_svg_text(x_svg, y_svg + 0.7,
                                f"TRAMO {label}",
-                               font_size=2.6, weight="700",
-                               color="#0a3055"))
+                               font_size=FONT_LABEL, weight="700",
+                               color=COLOR_DIM))
     return "\n".join(parts)
 
 
@@ -1252,6 +1486,7 @@ def _build_single_sheet(
     pole_y_levels: list[float],
     validation: dict | None,
     functional_elements_3d: list[dict] | None = None,
+    bay_steps_m: tuple[float, ...] | None = None,
 ) -> str:
     """Hoja única — uso para andamios rectos (1 tramo) o sin path_points.
 
@@ -1318,11 +1553,12 @@ def _build_single_sheet(
     plan_xs_consol = consolidate_coords(plan_chain_x or [])
     plan_ys_consol = consolidate_coords(plan_chain_y or [])
 
+    bay_steps = tuple(bay_steps_m) if bay_steps_m else LAYHER_BAY_LENGTHS_M
     front_svg, _, front_denom, _ = _draw_view(
         front_rect, front, view_label="ALZADO FRONTAL",
         chain_dim_x=front_chain_x, chain_dim_y=front_chain_y,
         axes_x_labels=axis_labels_numeric(len(front_xs_consol)),
-        modular_steps_x=LAYHER_BAY_LENGTHS_M,
+        modular_steps_x=bay_steps,
         modular_steps_y=LAYHER_FLOOR_HEIGHTS_M,
     )
     plan_svg, _, _, plan_transform = _draw_view(
@@ -1330,8 +1566,8 @@ def _build_single_sheet(
         chain_dim_x=plan_chain_x, chain_dim_y=plan_chain_y,
         axes_x_labels=axis_labels_numeric(len(plan_xs_consol)),
         axes_y_labels=axis_labels_alpha(len(plan_ys_consol)),
-        modular_steps_x=LAYHER_BAY_LENGTHS_M,
-        modular_steps_y=LAYHER_BAY_LENGTHS_M,
+        modular_steps_x=bay_steps,
+        modular_steps_y=bay_steps,
         fixed_scale_denom=front_denom,
     )
     plan_overlays = _draw_top_overlays(
@@ -1376,6 +1612,7 @@ def _build_overview_sheet(
     sheet_n: int,
     sheet_total: int,
     functional_elements_3d: list[dict] | None = None,
+    bay_steps_m: tuple[float, ...] | None = None,
 ) -> str:
     """Hoja overview para andamios multi-tramo.
 
@@ -1431,13 +1668,14 @@ def _build_overview_sheet(
     plan_xs_consol = consolidate_coords(plan_chain_x or [])
     plan_ys_consol = consolidate_coords(plan_chain_y or [])
 
+    bay_steps = tuple(bay_steps_m) if bay_steps_m else LAYHER_BAY_LENGTHS_M
     plan_svg, _, plan_denom, plan_transform = _draw_view(
         plan_rect, top, view_label="PLANTA GENERAL (referencia)",
         chain_dim_x=plan_chain_x, chain_dim_y=plan_chain_y,
         axes_x_labels=axis_labels_numeric(len(plan_xs_consol)),
         axes_y_labels=axis_labels_alpha(len(plan_ys_consol)),
-        modular_steps_x=LAYHER_BAY_LENGTHS_M,
-        modular_steps_y=LAYHER_BAY_LENGTHS_M,
+        modular_steps_x=bay_steps,
+        modular_steps_y=bay_steps,
     )
     parts.append(plan_svg)
     parts.append(_draw_top_overlays(
@@ -1481,6 +1719,7 @@ def _build_tramo_sheet(
     validation: dict | None,
     sheet_n: int,
     sheet_total: int,
+    bay_steps_m: tuple[float, ...] | None = None,
 ) -> str:
     """Hoja de un tramo: alzado frontal local + cota a ejes + cajetín.
 
@@ -1544,7 +1783,7 @@ def _build_tramo_sheet(
         view_label=f"ALZADO TRAMO {label}",
         chain_dim_x=chain_dim_x, chain_dim_y=chain_dim_y,
         axes_x_labels=axis_labels_numeric(len(chain_xs_consol)),
-        modular_steps_x=LAYHER_BAY_LENGTHS_M,
+        modular_steps_x=tuple(bay_steps_m) if bay_steps_m else LAYHER_BAY_LENGTHS_M,
         modular_steps_y=LAYHER_FLOOR_HEIGHTS_M,
         fit_to_canvas=True,
     )
@@ -1555,7 +1794,7 @@ def _build_tramo_sheet(
     parts.append(_svg_rect(ix, iy, iw, ih, width=0.4))
     parts.append(_svg_text(ix + iw/2, iy + 5,
                            f"DATOS DEL TRAMO {label}",
-                           font_size=3.0, anchor="middle", weight="700"))
+                           font_size=FONT_AXIS, anchor="middle", weight="700"))
     info_lines = [
         f"Origen (m):  ({frame.origin[0]:.2f}, {frame.origin[1]:.2f}, {frame.origin[2]:.2f})",
         f"Final (m):   ({frame.end[0]:.2f}, {frame.end[1]:.2f}, {frame.end[2]:.2f})",
@@ -1565,7 +1804,7 @@ def _build_tramo_sheet(
     ]
     for i, line in enumerate(info_lines):
         parts.append(_svg_text(ix + 3, iy + 10 + i*4, line,
-                               font_size=2.4, anchor="start"))
+                               font_size=FONT_DIM, anchor="start"))
 
     parts.append(_title_block(
         title_rect,
@@ -1602,8 +1841,12 @@ def generate_cad_sheets(
     validation: dict | None = None,
     path_points_3d: list[tuple[float, float, float]] | None = None,
     functional_elements_3d: list[dict] | None = None,
+    bay_steps_m: tuple[float, ...] | None = None,
 ) -> list[str]:
     """Genera el conjunto de hojas SVG del plano CAD.
+
+    `bay_steps_m`: longitudes modulares del catálogo activo (multi-fabricante,
+    ver calc/catalogs.py) usadas para snapear cotas. None → Layher (histórico).
 
     Caso 1 (1 tramo o sin path_points): devuelve `[overview_sheet]`.
     El layout es alzado frontal + planta + isometría + BOM + cajetín.
@@ -1625,6 +1868,7 @@ def generate_cad_sheets(
         author=author,
         floor_heights=floor_heights or [],
         validation=validation,
+        bay_steps_m=bay_steps_m,
     )
     if len(frames) <= 1:
         return [_build_single_sheet(

@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Andamios trayectoria",
     "author": "mjuica",
-    "version": (0, 7, 16),
+    "version": (0, 7, 17),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Andamios",
     "description": "Genera andamios paramétricos a lo largo de una polilínea (con esquinas) + cálculo estructural FEM",
@@ -325,8 +325,479 @@ def _clear_collection(name):
     bpy.data.collections.remove(coll)
 
 
-_TUBE_MESH_CACHE = {}   # (length, diameter, coll_name) → mesh
-_BOX_MESH_CACHE = {}    # (sx, sy, sz, coll_name) → mesh
+_TUBE_MESH_CACHE = {}     # (length, diameter, coll_name) → mesh
+_BOX_MESH_CACHE = {}      # (sx, sy, sz, coll_name) → mesh
+_ROSETTE_MESH_CACHE = {}  # (outer, inner, thickness) → mesh
+
+# Convención Fase A — obstáculos del entorno. La collection "obstaculos" puede
+# contener meshes con prefijos especiales que el addon reconoce:
+#   - Terrain_*  → suelo (raycast vertical para obtener Z bajo cada poste)
+#   - Wall_*     → pared lateral (Fase B, todavía no implementado)
+#   - Volume_*   → volumen sólido (Fase D, todavía no implementado)
+_OBSTACLES_COLLECTION_NAMES = ("obstaculos", "obstáculos", "Obstaculos", "Obstáculos")
+_TERRAIN_PREFIX = "Terrain_"
+_WALL_PREFIX = "Wall_"
+_VOLUME_PREFIX = "Volume_"
+_TRAMO_SPLIT_DZ_M = 1.0   # umbral de salto vertical para partir la trayectoria
+                           # en sub-tramos escalonados (camino 2 — ver execute)
+_MAX_JACK_LENGTH_M = 0.80    # husillo comercial típico; > esto → warning
+_MIN_DECK_PIECE_M = 0.50     # plataforma más corta del catálogo; <esto → skip + warning
+_LAST_TERRAIN_WARNINGS = []  # warnings acumulados durante la última generación
+_LAST_WALL_WARNINGS = []     # warnings sobre obstáculos verticales
+_LAST_WALL_RESULTS = {       # estadísticas de mitigación
+    "decks_trimmed": 0, "decks_skipped": 0, "poles_blocked": 0,
+    "bays_skipped": 0,        # bays enteros omitidos por Volume_* (Fase D)
+    "obstacles_present": False,  # cualquier Wall_* o Volume_* en escena
+}
+
+
+def _get_terrain_meshes():
+    """Devuelve la lista de objetos mesh con prefijo Terrain_ que viven en la
+    collection de obstáculos. Vacía si no hay collection o no hay terrenos."""
+    coll = None
+    for name in _OBSTACLES_COLLECTION_NAMES:
+        coll = bpy.data.collections.get(name)
+        if coll is not None:
+            break
+    if coll is None:
+        return []
+    return [o for o in coll.objects
+            if o.type == 'MESH' and o.name.startswith(_TERRAIN_PREFIX)]
+
+
+def _raycast_terrain_z(x, y, terrain_meshes, z_start=50.0, z_min=-50.0):
+    """Raycast vertical hacia abajo desde (x, y, z_start) contra una lista de
+    meshes. Devuelve la Z de la primera intersección, o None si no hay hit
+    en ninguno de los terrenos."""
+    if not terrain_meshes:
+        return None
+    origin = Vector((x, y, z_start))
+    direction = Vector((0.0, 0.0, -1.0))
+    max_dist = z_start - z_min
+    best_z = None
+    for obj in terrain_meshes:
+        try:
+            inv = obj.matrix_world.inverted()
+        except ValueError:
+            continue
+        local_origin = inv @ origin
+        local_dir = (inv.to_3x3() @ direction).normalized()
+        ok, hit_local, _, _ = obj.ray_cast(local_origin, local_dir, distance=max_dist)
+        if not ok:
+            continue
+        hit_world = obj.matrix_world @ hit_local
+        if best_z is None or hit_world.z > best_z:
+            best_z = hit_world.z
+    return best_z
+
+
+def _get_wall_meshes():
+    """Meshes de la collection de obstáculos con prefijo Wall_."""
+    coll = None
+    for name in _OBSTACLES_COLLECTION_NAMES:
+        coll = bpy.data.collections.get(name)
+        if coll is not None:
+            break
+    if coll is None:
+        return []
+    return [o for o in coll.objects
+            if o.type == 'MESH' and o.name.startswith(_WALL_PREFIX)]
+
+
+def _get_volume_meshes():
+    """Meshes de la collection de obstáculos con prefijo Volume_."""
+    coll = None
+    for name in _OBSTACLES_COLLECTION_NAMES:
+        coll = bpy.data.collections.get(name)
+        if coll is not None:
+            break
+    if coll is None:
+        return []
+    return [o for o in coll.objects
+            if o.type == 'MESH' and o.name.startswith(_VOLUME_PREFIX)]
+
+
+def _point_inside_volume(point, volume_meshes):
+    """Point-in-mesh por paridad de raycast. Usa una dirección NO canónica
+    para evitar falsos negativos cuando el rayo pasa por edges/vertices
+    alineados con los ejes (caso común en meshes generadas por bbox)."""
+    if not volume_meshes:
+        return False
+    p = Vector(point)
+    # Dirección oblicua reproducible: evita hits ambiguos en caras axis-aligned
+    direction = Vector((0.7321, 0.4523, 0.5081)).normalized()
+    max_dist = 1000.0
+    for obj in volume_meshes:
+        try:
+            inv = obj.matrix_world.inverted()
+        except ValueError:
+            continue
+        local_origin = inv @ p
+        local_dir = (inv.to_3x3() @ direction).normalized()
+        n_hits = 0
+        t_cur = 0.0
+        while t_cur < max_dist:
+            origin = local_origin + local_dir * t_cur
+            ok, hit_local, _, _ = obj.ray_cast(origin, local_dir, distance=max_dist - t_cur)
+            if not ok:
+                break
+            t_hit = (hit_local - local_origin).length
+            if t_hit <= t_cur + 1e-3:
+                break
+            n_hits += 1
+            t_cur = t_hit + 1e-3
+        if n_hits % 2 == 1:
+            return True   # dentro de este volumen
+    return False
+
+
+def _volume_blocked_intervals(p1, p2, volume_meshes, tol=1e-3):
+    """Para cada volumen, devuelve los intervalos (t_in, t_out) en [0, 1] del
+    segmento que están DENTRO del volumen. La unión de todos esos intervalos
+    es la región bloqueada (a sustraer del segmento libre)."""
+    if not volume_meshes:
+        return []
+    p1 = Vector(p1); p2 = Vector(p2)
+    direction = p2 - p1
+    length = direction.length
+    if length < 1e-6:
+        return []
+    dir_unit = direction / length
+    blocked = []
+    for obj in volume_meshes:
+        try:
+            inv = obj.matrix_world.inverted()
+        except ValueError:
+            continue
+        local_dir = (inv.to_3x3() @ dir_unit).normalized()
+        # Recolectar todos los hits a lo largo del segmento
+        hits = []
+        t_cur = 0.0
+        while t_cur < 1.0:
+            origin = p1 + direction * t_cur
+            local_origin = inv @ origin
+            remaining = length * (1.0 - t_cur)
+            ok, hit_local, _, _ = obj.ray_cast(local_origin, local_dir, distance=remaining)
+            if not ok:
+                break
+            hit_world = obj.matrix_world @ hit_local
+            t_hit = (hit_world - p1).length / length
+            if t_hit <= t_cur + tol:
+                break
+            hits.append(t_hit)
+            t_cur = t_hit + tol
+        # Si p1 ya está dentro del volumen, el primer hit es la salida.
+        # Hacemos parity-check sobre el origen.
+        starts_inside = _point_inside_volume(p1, [obj])
+        if starts_inside:
+            hits = [0.0] + hits
+        if len(hits) % 2 == 1:
+            hits.append(1.0)  # nunca sale: bloqueado hasta el final
+        for k in range(0, len(hits), 2):
+            blocked.append((hits[k], hits[k + 1]))
+    return blocked
+
+
+def _subtract_intervals(free_list, blocked, tol=1e-3):
+    """Sustrae cada intervalo bloqueado de la lista de intervalos libres.
+    Ambos en [0, 1]. Devuelve nueva lista de libres."""
+    result = list(free_list)
+    for (b0, b1) in blocked:
+        new_result = []
+        for (f0, f1) in result:
+            if b1 <= f0 + tol or b0 >= f1 - tol:
+                new_result.append((f0, f1))
+                continue
+            if b0 > f0 + tol:
+                new_result.append((f0, b0))
+            if b1 < f1 - tol:
+                new_result.append((b1, f1))
+        result = new_result
+    return result
+
+
+def _clipping_intervals_combined(p1, p2, walls, volumes):
+    """Intervalos libres considerando ambos: walls (planes — cada hit es
+    punto de corte) y volumes (interior bloqueado). Devuelve lista de tuplas
+    (t0, t1) con tramos libres del segmento."""
+    intervals = _free_intervals(p1, p2, walls) if walls else [(0.0, 1.0)]
+    blocked = _volume_blocked_intervals(p1, p2, volumes) if volumes else []
+    if blocked:
+        intervals = _subtract_intervals(intervals, blocked)
+    return intervals
+
+
+def _segment_first_hit(p1, p2, walls):
+    """Lanza un rayo de p1 a p2 contra cada wall. Devuelve (t, point) del primer
+    hit (t en [0, 1], donde 0 = p1 y 1 = p2), o (None, None) si el segmento
+    está libre.
+
+    Como el segmento puede ENTRAR y SALIR de un wall plano (mesh sin grosor
+    suele tener una sola hit), iteramos en ambos sentidos para detectar entrada
+    y salida y devolvemos la primera entrada por consistencia.
+    """
+    p1 = Vector(p1)
+    p2 = Vector(p2)
+    direction = p2 - p1
+    length = direction.length
+    if length < 1e-6 or not walls:
+        return None, None
+    dir_unit = direction / length
+    best_t = None
+    best_point = None
+    for obj in walls:
+        try:
+            inv = obj.matrix_world.inverted()
+        except ValueError:
+            continue
+        local_origin = inv @ p1
+        local_dir = (inv.to_3x3() @ dir_unit).normalized()
+        ok, hit_local, _, _ = obj.ray_cast(local_origin, local_dir, distance=length)
+        if not ok:
+            continue
+        hit_world = obj.matrix_world @ hit_local
+        t = (hit_world - p1).length / length
+        if 1e-4 < t < 1 - 1e-4:
+            if best_t is None or t < best_t:
+                best_t = t
+                best_point = hit_world
+    return best_t, best_point
+
+
+def _free_intervals(p1, p2, walls, tol=1e-3):
+    """Descompone el segmento p1→p2 en una lista de intervalos (t_start, t_end)
+    libres de walls (t en [0, 1]). Si todo está libre devuelve [(0,1)].
+
+    Algoritmo: lanza rayos sucesivos de p1 hacia p2 saltando desde cada hit
+    encontrado. Asume que p1 está fuera de cualquier wall (válido para
+    polilínea de trayectoria). Para Wall_* tipo Plane (sin grosor) cada
+    intersección alterna inside/outside, así que un solo hit deja [0, t_hit]
+    libre y el resto bloqueado.
+    """
+    p1 = Vector(p1)
+    p2 = Vector(p2)
+    direction = p2 - p1
+    length = direction.length
+    if length < 1e-6:
+        return [(0.0, 1.0)]
+    if not walls:
+        return [(0.0, 1.0)]
+    dir_unit = direction / length
+    hits = []
+    for obj in walls:
+        try:
+            inv = obj.matrix_world.inverted()
+        except ValueError:
+            continue
+        local_dir = (inv.to_3x3() @ dir_unit).normalized()
+        t_cur = 0.0
+        while t_cur < 1.0:
+            origin = p1 + direction * t_cur
+            local_origin = inv @ origin
+            remaining = length * (1.0 - t_cur)
+            ok, hit_local, _, _ = obj.ray_cast(local_origin, local_dir, distance=remaining)
+            if not ok:
+                break
+            hit_world = obj.matrix_world @ hit_local
+            t_hit = (hit_world - p1).length / length
+            if t_hit <= t_cur + tol:
+                break  # protección anti-loop por float
+            hits.append(t_hit)
+            t_cur = t_hit + tol
+    if not hits:
+        return [(0.0, 1.0)]
+    hits.sort()
+    # Walls tipo Plane: cada hit es un PUNTO de corte (la pared no tiene
+    # interior). El segmento se divide en (n_hits + 1) sub-intervalos con un
+    # pequeño gap en cada hit. Para volúmenes sólidos (Fase D) se usará un
+    # algoritmo distinto que sí trata el interior como bloqueado.
+    intervals = []
+    last_t = 0.0
+    for t in hits:
+        if t - last_t > tol * 2:
+            intervals.append((last_t, t - tol))
+        last_t = t + tol
+    if 1.0 - last_t > tol * 2:
+        intervals.append((last_t, 1.0))
+    return intervals
+
+
+def _emit_plank_with_walls(p_start, p_end, plank_w, perp, walls, name,
+                           coll, thickness, z_top, yaw, volumes=None):
+    """Genera uno o más planks entre p_start y p_end respetando walls y
+    volumes. Cada sub-pieza < _MIN_DECK_PIECE_M (excepto el plank entero)
+    se omite con counter. Devuelve número de objetos creados."""
+    volumes = volumes or []
+    if walls or volumes:
+        # Lateral check (paredes paralelas que cortan el ancho del plank)
+        if walls:
+            lat = _plank_clipping_intervals(p_start, p_end, perp, plank_w, walls)
+            if not lat:
+                _LAST_WALL_RESULTS["decks_skipped"] += 1
+                return 0
+        # Combinar walls (long split) + volumes (intervalos bloqueados)
+        intervals = _clipping_intervals_combined(p_start, p_end, walls, volumes)
+        if not intervals:
+            _LAST_WALL_RESULTS["decks_skipped"] += 1
+            return 0
+    else:
+        intervals = [(0.0, 1.0)]
+    seg_len = (Vector(p_end) - Vector(p_start)).length
+    direction = Vector(p_end) - Vector(p_start)
+    n_created = 0
+    single = (len(intervals) == 1 and intervals[0][0] < 1e-3
+              and intervals[0][1] > 1 - 1e-3)
+    for sub_idx, (t0, t1) in enumerate(intervals):
+        sub_len = (t1 - t0) * seg_len
+        if sub_len < _MIN_DECK_PIECE_M and not single:
+            _LAST_WALL_RESULTS["decks_skipped"] += 1
+            continue
+        sub_center = Vector(p_start) + direction * ((t0 + t1) * 0.5)
+        sub_center.z = z_top - thickness * 0.5
+        sub_name = name if single else f"{name}_w{sub_idx}"
+        plank_obj = _make_box(
+            sub_center,
+            (max(0.1, sub_len - 0.005), plank_w - 0.005, thickness),
+            sub_name, coll, rotation_z=yaw,
+        )
+        if plank_obj is not None:
+            n_created += 1
+            if not single:
+                plank_obj["andamio_custom_length"] = True
+                _LAST_WALL_RESULTS["decks_trimmed"] += 1
+    return n_created
+
+
+def _emit_tube_clipped(p1, p2, diameter, name, coll, walls, min_piece=0.30,
+                       volumes=None):
+    """Wrapper de `_make_tube` que respeta walls y volumes. Sub-piezas más
+    cortas que `min_piece` se omiten. Devuelve lista de objetos."""
+    volumes = volumes or []
+    if not walls and not volumes:
+        obj = _make_tube(p1, p2, diameter, name, coll)
+        return [obj] if obj else []
+    intervals = _clipping_intervals_combined(p1, p2, walls, volumes)
+    if not intervals:
+        return []
+    direction = Vector(p2) - Vector(p1)
+    seg_len = direction.length
+    objs = []
+    single = len(intervals) == 1 and intervals[0][0] < 1e-3 and intervals[0][1] > 1 - 1e-3
+    for idx, (t0, t1) in enumerate(intervals):
+        sub_len = (t1 - t0) * seg_len
+        if sub_len < min_piece:
+            continue
+        a = Vector(p1) + direction * t0
+        b = Vector(p1) + direction * t1
+        sub_name = name if single else f"{name}_w{idx}"
+        obj = _make_tube(a, b, diameter, sub_name, coll)
+        if obj:
+            if not single:
+                obj["andamio_custom_length"] = True
+            objs.append(obj)
+    return objs
+
+
+def _pole_blocked_by_wall(p_bot, p_top, walls, volumes=None):
+    """True si el segmento vertical p_bot→p_top intersecta alguna wall o
+    volume. Hace raycast a lo largo del poste contra ambos tipos: cualquier
+    hit (incluso parcial) bloquea el poste. Adicionalmente comprueba si
+    p_bot está YA dentro de un volume (caso poste enterrado en un
+    saliente)."""
+    volumes = volumes or []
+    if not walls and not volumes:
+        return False
+    p_bot = Vector(p_bot)
+    p_top = Vector(p_top)
+    direction = p_top - p_bot
+    length = direction.length
+    if length < 1e-6:
+        return False
+    dir_unit = direction / length
+    # Walls + volumes: cualquier hit a lo largo del poste vertical bloquea
+    for obj in list(walls) + list(volumes):
+        try:
+            inv = obj.matrix_world.inverted()
+        except ValueError:
+            continue
+        local_origin = inv @ p_bot
+        local_dir = (inv.to_3x3() @ dir_unit).normalized()
+        ok, _, _, _ = obj.ray_cast(local_origin, local_dir, distance=length)
+        if ok:
+            return True
+    # Si p_bot empieza ya dentro del volume, no habrá hit hacia arriba
+    # (parte ya pasada). Comprobamos point-in-volume como respaldo.
+    if volumes and _point_inside_volume(p_bot, volumes):
+        return True
+    return False
+
+
+def _plank_clipping_intervals(p_start, p_end, perp_axis, plank_w, walls):
+    """Decide cómo recortar un plank contra una lista de walls.
+
+    Devuelve una lista de intervalos (t_start, t_end) en [0, 1] sobre el eje
+    longitudinal del plank. Combina dos chequeos:
+      - Lateral (perpendicular al plank): un raycast desde el midpoint en
+        ±perp a distancia plank_w/2 detecta una pared que cruza el ancho del
+        plank → skip total (lista vacía).
+      - Longitudinal: `_free_intervals` divide el segmento en porciones
+        libres respecto a paredes que cruzan en sentido transversal.
+    """
+    if not walls:
+        return [(0.0, 1.0)]
+    p_mid = (Vector(p_start) + Vector(p_end)) * 0.5
+    perp = Vector(perp_axis)
+    perp.z = 0.0
+    if perp.length < 1e-6:
+        perp = Vector((1.0, 0.0, 0.0))
+    perp = perp.normalized()
+    half_w = plank_w * 0.5
+    for direction in (perp, -perp):
+        for obj in walls:
+            try:
+                inv = obj.matrix_world.inverted()
+            except ValueError:
+                continue
+            local_origin = inv @ p_mid
+            local_dir = (inv.to_3x3() @ direction).normalized()
+            ok, _, _, _ = obj.ray_cast(local_origin, local_dir, distance=half_w)
+            if ok:
+                return []   # pared dentro del ancho → plank no instalable
+    return _free_intervals(p_start, p_end, walls)
+
+
+def _point_inside_walls(point, walls, eps=0.05):
+    """Lanza 4 rayos cortos en direcciones X+/-, Y+/- desde el punto. Si todos
+    impactan dentro de `eps`, asumimos que el punto está dentro de un volumen
+    cerrado (o muy pegado a una pared). Para Walls finas (Plane vertical) suele
+    devolver False — son superficies, no volúmenes. El punto sólo se marca
+    "dentro" si está rodeado de superficie en las 4 direcciones."""
+    if not walls:
+        return False
+    p = Vector(point)
+    dirs = [Vector((1, 0, 0)), Vector((-1, 0, 0)),
+            Vector((0, 1, 0)), Vector((0, -1, 0))]
+    n_hits = 0
+    for d in dirs:
+        for obj in walls:
+            try:
+                inv = obj.matrix_world.inverted()
+            except ValueError:
+                continue
+            local_origin = inv @ p
+            local_dir = (inv.to_3x3() @ d).normalized()
+            ok, _, _, _ = obj.ray_cast(local_origin, local_dir, distance=eps)
+            if ok:
+                n_hits += 1
+                break
+    return n_hits >= 3   # rodeado por al menos 3 lados
+
+# Límite del offset miter en esquinas. Cuando depth/cos(α/2) supera este factor
+# (ángulos internos < ≈60°), se hace clamp para evitar que el back corner se
+# proyecte fuera de la escena. La pared adyacente queda ligeramente inclinada
+# en los últimos cm cerca del corner; geométricamente menos exacto pero acotado.
+MAX_MITER_OFFSET_FACTOR = 2.0
+_LAST_MITER_CLAMPED = []  # índices de vertices cuyo miter fue clamped (per-generate)
 
 
 def _make_tube(p1, p2, diameter, name, coll):
@@ -384,39 +855,101 @@ def _make_box(center, size, name, coll, rotation_z=0.0):
     return obj
 
 
-def _make_rosette(pos, outer_diameter, inner_diameter, thickness, name, coll):
-    """Annular rosette (Layher Allround style) wrapping around a pole.
+_ROSETTE_N_LOBES = 8        # nº de orejas/lóbulos (Layher Allround estándar)
+_ROSETTE_LOBE_REACH = 1.18  # las orejas sobresalen este factor del radio exterior
+_ROSETTE_LOBE_HALF = 0.13   # mitad del ancho angular relativo (rad como fracción de 2π/N)
+_ROSETTE_ARC_SEGS = 3       # subdivisiones del arco entre dos orejas
 
-    The hole has `inner_diameter` (≈ pole diameter) so the pole visually passes through
-    the rosette and welds to it. The disc extends outward to `outer_diameter`.
+
+def _build_rosette_mesh(outer_diameter, inner_diameter, thickness, mesh_name):
+    """Anillo Layher Allround con N orejas radiales sobresaliendo del contorno
+    exterior (estrella de N puntas vista desde arriba).
+
+    Construido con bmesh directo — sin booleans GN — porque la versión con
+    Mesh Boolean en GN no subdivide correctamente el ngon superior y la
+    silueta queda lisa. Aquí dibujamos los vértices del contorno explícitamente
+    incluyendo las orejas, así la silueta SE VE dentada.
+
+    Topología: dos contornos cerrados (exterior dentado + interior circular),
+    bridge entre ellos para top y bot, paredes laterales completas.
     """
-    mesh = bpy.data.meshes.new(name)
+    mesh = bpy.data.meshes.new(mesh_name)
     bm = bmesh.new()
-    segments = 16
+    R_o = outer_diameter * 0.5
+    R_lobe = R_o * _ROSETTE_LOBE_REACH
+    R_i = max(0.001, inner_diameter * 0.5)
     z_bot = -thickness * 0.5
     z_top = thickness * 0.5
-    R_o = outer_diameter * 0.5
-    R_i = max(0.001, inner_diameter * 0.5)
 
-    v_ob, v_ot, v_ib, v_it = [], [], [], []
-    for s in range(segments):
-        ang = 2.0 * pi * s / segments
-        cs = cos(ang)
-        sn = sin(ang)
-        v_ob.append(bm.verts.new((R_o * cs, R_o * sn, z_bot)))
-        v_ot.append(bm.verts.new((R_o * cs, R_o * sn, z_top)))
-        v_ib.append(bm.verts.new((R_i * cs, R_i * sn, z_bot)))
-        v_it.append(bm.verts.new((R_i * cs, R_i * sn, z_top)))
-    bm.verts.ensure_lookup_table()
-    for i in range(segments):
-        j = (i + 1) % segments
-        bm.faces.new([v_it[i], v_ot[i], v_ot[j], v_it[j]])           # top annulus
-        bm.faces.new([v_ib[j], v_ob[j], v_ob[i], v_ib[i]])           # bottom annulus
-        bm.faces.new([v_ob[i], v_ob[j], v_ot[j], v_ot[i]])           # outer side
-        bm.faces.new([v_it[i], v_it[j], v_ib[j], v_ib[i]])           # inner side
+    # Construir el contorno exterior (lista de puntos 2D) con orejas
+    sector = 2.0 * pi / _ROSETTE_N_LOBES
+    half_lobe_ang = sector * _ROSETTE_LOBE_HALF  # mitad ancho de la oreja
+    outer_2d = []
+    for k in range(_ROSETTE_N_LOBES):
+        ang_center = sector * k
+        ang_arc_start = ang_center - sector * 0.5 + half_lobe_ang
+        ang_arc_end = ang_center - half_lobe_ang
+        # Arco entre dos orejas (sector liso)
+        for s in range(_ROSETTE_ARC_SEGS + 1):
+            t = s / _ROSETTE_ARC_SEGS
+            ang = ang_arc_start + (ang_arc_end - ang_arc_start) * t
+            outer_2d.append((R_o * cos(ang), R_o * sin(ang)))
+        # Oreja: rampa hacia fuera (R_lobe) y vuelta a R_o por el otro lado
+        ang_lobe_l = ang_center - half_lobe_ang * 0.55
+        ang_lobe_r = ang_center + half_lobe_ang * 0.55
+        outer_2d.append((R_lobe * cos(ang_lobe_l), R_lobe * sin(ang_lobe_l)))
+        outer_2d.append((R_lobe * cos(ang_lobe_r), R_lobe * sin(ang_lobe_r)))
+        outer_2d.append((R_o * cos(ang_center + half_lobe_ang),
+                         R_o * sin(ang_center + half_lobe_ang)))
+
+    # Contorno interno con el MISMO nº de puntos para que el bridge sea directo
+    n = len(outer_2d)
+    inner_2d = []
+    for s in range(n):
+        ang = 2.0 * pi * s / n
+        inner_2d.append((R_i * cos(ang), R_i * sin(ang)))
+
+    # Vértices: 4 anillos (outer top/bot, inner top/bot)
+    v_ot = [bm.verts.new((x, y, z_top)) for x, y in outer_2d]
+    v_ob = [bm.verts.new((x, y, z_bot)) for x, y in outer_2d]
+    v_it = [bm.verts.new((x, y, z_top)) for x, y in inner_2d]
+    v_ib = [bm.verts.new((x, y, z_bot)) for x, y in inner_2d]
+
+    # Caras top (normal +Z): cuad horizontal outer_top → inner_top
+    for i in range(n):
+        j = (i + 1) % n
+        bm.faces.new([v_ot[i], v_ot[j], v_it[j], v_it[i]])
+    # Caras bot (normal -Z): cuad horizontal outer_bot → inner_bot, orden invertido
+    for i in range(n):
+        j = (i + 1) % n
+        bm.faces.new([v_ob[j], v_ob[i], v_ib[i], v_ib[j]])
+    # Pared exterior (vertical, normal hacia fuera)
+    for i in range(n):
+        j = (i + 1) % n
+        bm.faces.new([v_ot[i], v_ob[i], v_ob[j], v_ot[j]])
+    # Pared interior (vertical, normal hacia el centro = hacia el poste)
+    for i in range(n):
+        j = (i + 1) % n
+        bm.faces.new([v_it[j], v_ib[j], v_ib[i], v_it[i]])
+
     bm.normal_update()
     bm.to_mesh(mesh)
     bm.free()
+    return mesh
+
+
+def _make_rosette(pos, outer_diameter, inner_diameter, thickness, name, coll):
+    """Crea un objeto-roseta en `pos`. La mesh se comparte entre todas las
+    rosetas de la misma generación (mismo (outer, inner, thickness))."""
+    key = (round(outer_diameter, 4), round(inner_diameter, 4), round(thickness, 4))
+    mesh = _ROSETTE_MESH_CACHE.get(key)
+    if mesh is None:
+        mesh_name = (
+            f"RosetteM_{int(outer_diameter*1000)}_"
+            f"{int(inner_diameter*1000)}_{int(thickness*1000)}"
+        )
+        mesh = _build_rosette_mesh(outer_diameter, inner_diameter, thickness, mesh_name)
+        _ROSETTE_MESH_CACHE[key] = mesh
     obj = bpy.data.objects.new(name, mesh)
     coll.objects.link(obj)
     obj.location = pos
@@ -661,12 +1194,17 @@ def _ladder(p_bottom, p_top, width, rung_count, name, coll, side_axis=None):
     return objs
 
 
-def _ladder_handrail(p_bottom, p_top, side_axis, width, height, name, coll):
+def _ladder_handrail(p_bottom, p_top, side_axis, width, height, name, coll,
+                     deck_z_clamp=None):
     """Pasamanos lateral elevado paralelo a un lado de la escalera.
 
     Geometría: un tubo a `height` sobre el `rail_a` de la escalera (lado +side)
     + 2 verticales cortos que conectan riel y pasamanos en los extremos.
     Sirve para el agarre del trabajador durante el ascenso (EN 12811 §7.2).
+
+    Si `deck_z_clamp` se proporciona y el extremo superior del pasamanos lo
+    supera, el handrail se trunca justo por debajo (evita atravesar la
+    plataforma del piso superior) y se omite el `post_top` correspondiente.
 
     Naming: `{name}_handrail`, `{name}_handrail_post_bot`, `{name}_handrail_post_top`.
     Estas piezas NO se cuentan como escalera independiente en BOM
@@ -691,6 +1229,14 @@ def _ladder_handrail(p_bottom, p_top, side_axis, width, height, name, coll):
     handrail_bot = rail_bot + up
     handrail_top = rail_top + up
 
+    truncated = False
+    if deck_z_clamp is not None and handrail_top.z > deck_z_clamp:
+        if handrail_bot.z >= deck_z_clamp:
+            return []
+        t = (deck_z_clamp - handrail_bot.z) / (handrail_top.z - handrail_bot.z)
+        handrail_top = handrail_bot + (handrail_top - handrail_bot) * t
+        truncated = True
+
     objs = []
     handrail = _make_tube(handrail_bot, handrail_top, rail_d,
                           f"{name}_handrail", coll)
@@ -700,10 +1246,11 @@ def _ladder_handrail(p_bottom, p_top, side_axis, width, height, name, coll):
                           f"{name}_handrail_post_bot", coll)
     if post_bot:
         objs.append(post_bot)
-    post_top = _make_tube(rail_top, handrail_top, post_d,
-                          f"{name}_handrail_post_top", coll)
-    if post_top:
-        objs.append(post_top)
+    if not truncated:
+        post_top = _make_tube(rail_top, handrail_top, post_d,
+                              f"{name}_handrail_post_top", coll)
+        if post_top:
+            objs.append(post_top)
     return objs
 
 
@@ -722,49 +1269,72 @@ _POLE_LENGTH_CATALOGS = {
 }
 
 
+def _ensure_manufacturer_catalogs():
+    """Vuelca los catálogos multi-fabricante de calc.catalogs (PERI, ULMA,
+    DOKA, …) en los dicts de arriba. Lazy porque `calc` sólo es importable
+    tras _ensure_calc_on_path() (register o ejecución desde Text Editor);
+    GENERIC/LAYHER quedan inline como fallback si el import falla."""
+    if 'PERI' in _BAY_LENGTH_CATALOGS:
+        return
+    try:
+        from calc import catalogs as _cat
+    except ImportError:
+        return
+    for key in _cat.systems():
+        sys_ = _cat.get(key)
+        _BAY_LENGTH_CATALOGS.setdefault(key, list(sys_.bay_lengths_m))
+        _POLE_LENGTH_CATALOGS.setdefault(key, list(sys_.pole_lengths_m))
+
+
 def _bay_lengths_for_segment(segment_length, catalog_lengths, max_leftover=0.05):
     """Find the combination of standard bay lengths that fits `segment_length` with the
     smallest possible leftover (compensation piece appended at the end if > max_leftover).
 
-    Algorithm: dynamic programming over cm-discretised target. Reconstructs prefering the
-    largest standard pieces (fewer joints, fewer pieces).
+    Algorithm: dynamic programming over mm-discretised target. Reconstructs prefering the
+    largest standard pieces (fewer joints, fewer pieces). mm (no cm) porque hay piezas
+    de catálogo que no son cm enteros — p.ej. el larguero PERI UH de 37,5 cm; con cm
+    el DP la convertía en una pieza inexistente de 38 cm.
     """
     if not catalog_lengths or segment_length <= 0.01:
         return [max(0.0, segment_length)]
 
-    target_cm = max(1, round(segment_length * 100))
-    lens_cm = sorted({round(L * 100) for L in catalog_lengths if L > 0}, reverse=True)
-    if not lens_cm:
+    target_mm = max(1, round(segment_length * 1000))
+    lens_mm = sorted({round(L * 1000) for L in catalog_lengths if L > 0}, reverse=True)
+    if not lens_mm:
         return [segment_length]
 
-    reachable = [False] * (target_cm + 1)
+    reachable = [False] * (target_mm + 1)
     reachable[0] = True
-    for i in range(target_cm + 1):
+    for i in range(target_mm + 1):
         if not reachable[i]:
             continue
-        for L in lens_cm:
+        for L in lens_mm:
             j = i + L
-            if j <= target_cm:
+            if j <= target_mm:
                 reachable[j] = True
 
-    best_cm = target_cm
-    while best_cm > 0 and not reachable[best_cm]:
-        best_cm -= 1
+    best_mm = target_mm
+    while best_mm > 0 and not reachable[best_mm]:
+        best_mm -= 1
 
-    pieces_cm = []
-    cur = best_cm
+    pieces_mm = []
+    cur = best_mm
     while cur > 0:
-        for L in lens_cm:
+        for L in lens_mm:
             if L <= cur and reachable[cur - L]:
-                pieces_cm.append(L)
+                pieces_mm.append(L)
                 cur -= L
                 break
         else:
             break
 
-    pieces = [L / 100.0 for L in pieces_cm]
+    pieces = [L / 1000.0 for L in pieces_mm]
     leftover = segment_length - sum(pieces)
-    if leftover > max_leftover:
+    # Tolerancia 1 mm: las locations de Blender son float32 (6.3 se guarda
+    # como 6.30000019…), así que un sobrante nominal de 0.05 llega aquí como
+    # 0.05000019 y sin margen crearía un vano de compensación de 5 cm
+    # inmontable en vez de absorberse en el último vano.
+    if leftover > max_leftover + 1e-3:
         pieces.append(leftover)
     elif pieces and abs(leftover) > 1e-3:
         pieces[-1] += leftover
@@ -773,6 +1343,56 @@ def _bay_lengths_for_segment(segment_length, catalog_lengths, max_leftover=0.05)
 
 def _path_objects(props):
     return [item.obj for item in props.path_points if item.obj is not None]
+
+
+def _split_path_by_z_jumps(path_objs, dz_threshold=_TRAMO_SPLIT_DZ_M,
+                            terrain_meshes=None):
+    """Divide la lista de empties en sub-trayectorias cuando hay un salto
+    vertical grande entre dos consecutivos. Cada sub-trayectoria se construye
+    como un andamio independiente con su propio `ref_z`.
+
+    La Z relevante es:
+      1. Z del terreno bajo el empty (raycast) si `terrain_meshes` y hay hit.
+      2. Z propia del empty si no.
+
+    Esto permite auto-split también cuando los empties están todos a Z=0
+    pero el terreno tiene un salto importante entre ellos (P6: caso de
+    pendiente fuerte donde el jack excedería 80 cm sin partir).
+
+    Sub-trayectorias con menos de 2 empties se descartan."""
+    if len(path_objs) < 2:
+        return [list(path_objs)]
+
+    # Calculamos un Z efectivo POR EMPTY usando la misma fuente para todos:
+    # si hay terrain_meshes Y todos los empties tienen raycast hit, usamos el
+    # raycast; si CUALQUIERA falla, fallback a la Z propia de los empties
+    # para todos (mantener consistencia). Mezclar fuentes da deltas falsos.
+    if terrain_meshes:
+        z_ray = []
+        for obj in path_objs:
+            wp = obj.matrix_world.translation
+            z_ray.append(_raycast_terrain_z(wp.x, wp.y, terrain_meshes))
+        if all(z is not None for z in z_ray):
+            zs = z_ray
+        else:
+            zs = [obj.matrix_world.translation.z for obj in path_objs]
+    else:
+        zs = [obj.matrix_world.translation.z for obj in path_objs]
+
+    tramos = [[path_objs[0]]]
+    for i in range(1, len(path_objs)):
+        if abs(zs[i] - zs[i - 1]) > dz_threshold:
+            tramos.append([path_objs[i]])
+        else:
+            tramos[-1].append(path_objs[i])
+
+    # Comportamiento conservador: si CUALQUIER sub-tramo queda con < 2
+    # empties (no es una trayectoria válida por sí mismo), abandonar el
+    # split entero y devolver la trayectoria original. Mejor mantener el
+    # andamio continuo (con posibles jacks largos) que mutilarlo a medias.
+    if any(len(t) < 2 for t in tramos):
+        return [list(path_objs)]
+    return tramos
 
 
 def _compute_path_geometry(props):
@@ -819,33 +1439,37 @@ def _compute_path_geometry(props):
         seg_lens.append(L)
 
     depth = max(0.3, props.scaffold_depth)
+    max_offset = MAX_MITER_OFFSET_FACTOR * depth
     front_corners = list(P)
     back_corners = []
+
+    def _miter_offset(i, n1, n2, cos_a):
+        """Calcula el offset del back corner sobre el bisector con clamp.
+        Si el ángulo es tan agudo que el offset natural supera max_offset,
+        aplica clamp y registra el índice para el warning posterior."""
+        cos_half = sqrt(max(0.0, (1.0 + cos_a) * 0.5))
+        bis = n1 + n2
+        if cos_half < 1e-3 or bis.length < 1e-6:
+            return n1 * depth
+        natural = depth / cos_half
+        if natural > max_offset:
+            _LAST_MITER_CLAMPED.append(i)
+            return bis.normalized() * max_offset
+        return bis.normalized() * natural
+
     for i, p in enumerate(P):
         if closed:
             i_prev = (i - 1) % n_pts
-            n1, n2 = perps[i_prev], perps[i]
             cos_a = max(-1.0, min(1.0, forwards[i_prev].dot(forwards[i])))
-            cos_half = sqrt(max(0.0, (1.0 + cos_a) * 0.5))
-            bis = n1 + n2
-            if cos_half < 1e-3 or bis.length < 1e-6:
-                back_corners.append(p + n1 * depth)
-            else:
-                back_corners.append(p + bis.normalized() * (depth / cos_half))
+            back_corners.append(p + _miter_offset(i, perps[i_prev], perps[i], cos_a))
         else:
             if i == 0:
                 back_corners.append(p + perps[0] * depth)
             elif i == n_segs:
                 back_corners.append(p + perps[-1] * depth)
             else:
-                n1, n2 = perps[i - 1], perps[i]
                 cos_a = max(-1.0, min(1.0, forwards[i - 1].dot(forwards[i])))
-                cos_half = sqrt(max(0.0, (1.0 + cos_a) * 0.5))
-                bis = n1 + n2
-                if cos_half < 1e-3 or bis.length < 1e-6:
-                    back_corners.append(p + n1 * depth)
-                else:
-                    back_corners.append(p + bis.normalized() * (depth / cos_half))
+                back_corners.append(p + _miter_offset(i, perps[i - 1], perps[i], cos_a))
 
     # For closed loops, append a wrap-around so front_corners[i+1] works for the last segment
     if closed:
@@ -855,13 +1479,21 @@ def _compute_path_geometry(props):
     return P, forwards, perps, seg_lens, front_corners, back_corners
 
 
-def generate_scaffold(props, context):
-    """Build the scaffold along the polyline. Return a stats dict."""
-    # Reset mesh caches: previous generation's meshes are about to be removed via
-    # _clear_collection (and become orphans), so any stale references would point to
-    # invalid Blender data.
-    _TUBE_MESH_CACHE.clear()
-    _BOX_MESH_CACHE.clear()
+def generate_scaffold(props, context, clear_first=True):
+    """Build the scaffold along the polyline. Return a stats dict.
+
+    Cuando `clear_first=False` (modo multi-tramo), no se borra la collection
+    Scaffold ni los caches/warnings — el flujo asume que un primer tramo ya
+    los inicializó. Esto permite encadenar múltiples llamadas a esta función
+    para construir tramos escalonados sobre la misma escena."""
+    _ensure_manufacturer_catalogs()
+    if clear_first:
+        # Reset mesh caches: previous generation's meshes are about to be
+        # removed via _clear_collection (and become orphans).
+        _TUBE_MESH_CACHE.clear()
+        _BOX_MESH_CACHE.clear()
+        _ROSETTE_MESH_CACHE.clear()
+        _LAST_MITER_CLAMPED.clear()
     P, forwards, perps, seg_lens, front_corners, back_corners = _compute_path_geometry(props)
     n_segs = len(seg_lens)  # accounts for the closing segment in loop mode
 
@@ -901,7 +1533,8 @@ def generate_scaffold(props, context):
         # Identify which bay is the compensation: leftover whose length isn't in the catalog
         comp_idx = None
         if catalog_key != 'UNIFORM':
-            cat_set = {round(L, 4) for L in _BAY_LENGTH_CATALOGS[catalog_key]}
+            cat_set = {round(L, 4) for L in _BAY_LENGTH_CATALOGS.get(
+                catalog_key, _BAY_LENGTH_CATALOGS['GENERIC'])}
             for k, bl in enumerate(bay_list):
                 if round(bl, 4) not in cat_set:
                     comp_idx = k
@@ -932,20 +1565,67 @@ def generate_scaffold(props, context):
     n_unique_nodes = n_nodes - 1 if closed else n_nodes
 
     # ── Terrain Z handling ──────────────────────────────────────────────
-    # When `use_terrain_z` is on, each empty's Z is treated as the terrain elevation at
-    # that point. The scaffold must remain LEVEL (all platforms at the same height), so:
-    #   ref_z = max(p.z for p in P) + jack_height   (highest pole gets the minimum jack)
-    #   per-pole jack length = ref_z - terrain_z[i]
-    # All node Z values are then snapped to ref_z so the rest of the geometry (ledgers,
-    # planks, ladders) generates LEVEL automatically.
+    # Tres fuentes posibles de Z del terreno bajo cada poste, en orden de
+    # precedencia:
+    #   1. Raycast vertical contra meshes Terrain_* en la collection
+    #      "obstaculos" (Fase A — opt-in por convención de nombre).
+    #   2. `use_terrain_z`: cada empty de la trayectoria define su Z de suelo
+    #      (interpolado en bays intermedios).
+    #   3. base_z plano (comportamiento por defecto, suelo nivelado).
+    # Cualquier hit por raycast tiene prioridad sobre las otras dos fuentes.
     use_terrain = bool(getattr(props, 'use_terrain_z', False))
-    if use_terrain:
-        ground_max = max(p.z for p in P)
+    terrain_meshes = _get_terrain_meshes()
+    walls = _get_wall_meshes()
+    volumes = _get_volume_meshes()
+    if clear_first:
+        _LAST_TERRAIN_WARNINGS.clear()
+        _LAST_WALL_WARNINGS.clear()
+        _LAST_WALL_RESULTS["decks_trimmed"] = 0
+        _LAST_WALL_RESULTS["decks_skipped"] = 0
+        _LAST_WALL_RESULTS["poles_blocked"] = 0
+        _LAST_WALL_RESULTS["bays_skipped"] = 0
+        _LAST_WALL_RESULTS["obstacles_present"] = bool(walls or volumes)
+    else:
+        # En multi-tramo, walls/volumes/terrain están presentes para todos
+        _LAST_WALL_RESULTS["obstacles_present"] = (
+            _LAST_WALL_RESULTS["obstacles_present"] or bool(walls or volumes)
+        )
+
+    def _ground_z_for(n_local, fallback):
+        z = _raycast_terrain_z(n_local.x, n_local.y, terrain_meshes)
+        if z is not None:
+            return z, True
+        return fallback, False
+
+    if terrain_meshes or use_terrain:
+        # Fallback por nodo según fuente disponible
+        front_fb = [n.z if use_terrain else props.base_z for n in nodes_front]
+        back_fb = [n.z if use_terrain else props.base_z for n in nodes_back]
+        ground_z_front = []
+        ground_z_back = []
+        n_misses = 0
+        for i, n in enumerate(nodes_front):
+            z, hit = _ground_z_for(n, front_fb[i])
+            ground_z_front.append(z)
+            if terrain_meshes and not hit:
+                n_misses += 1
+        for i, n in enumerate(nodes_back):
+            z, hit = _ground_z_for(n, back_fb[i])
+            ground_z_back.append(z)
+            if terrain_meshes and not hit:
+                n_misses += 1
+        if n_misses > 0:
+            _LAST_TERRAIN_WARNINGS.append(("no_hit", n_misses))
+
+        ground_max = max(max(ground_z_front), max(ground_z_back))
         ref_z = ground_max + max(0.0, props.jack_height)
-        # Save original Z per node (the actual terrain elevation under each pole)
-        ground_z_front = [n.z for n in nodes_front]
-        ground_z_back = [n.z for n in nodes_back]
-        # Snap all nodes to the level reference so the rest of the generation builds level
+
+        # Comprobar jacks excesivos (> _MAX_JACK_LENGTH_M)
+        excess = sum(1 for z in ground_z_front + ground_z_back
+                     if (ref_z - z) > _MAX_JACK_LENGTH_M)
+        if excess > 0:
+            _LAST_TERRAIN_WARNINGS.append(("jack_too_long", excess))
+
         nodes_front = [Vector((n.x, n.y, ref_z)) for n in nodes_front]
         nodes_back = [Vector((n.x, n.y, ref_z)) for n in nodes_back]
     else:
@@ -953,8 +1633,9 @@ def generate_scaffold(props, context):
         ground_z_front = [ref_z] * n_nodes
         ground_z_back = [ref_z] * n_nodes
 
-    # Reset and create collections
-    _clear_collection(SCAFFOLD_COLLECTION)
+    # Reset and create collections (solo el primer tramo limpia)
+    if clear_first:
+        _clear_collection(SCAFFOLD_COLLECTION)
     root = _ensure_collection(SCAFFOLD_COLLECTION)
     coll_poles = _ensure_collection("Postes", root)
     coll_ledgers = _ensure_collection("Travesaños", root)
@@ -1102,9 +1783,13 @@ def generate_scaffold(props, context):
         p = nodes_front[i]
         bot = p.copy()
         top = p + Vector((0, 0, pole_height))
+        if walls and _pole_blocked_by_wall(bot, top, walls, volumes):
+            _LAST_WALL_RESULTS["poles_blocked"] += 1
+            pole_F_segments[i] = []
+            continue
         tag = "C" if is_corner[i] else "_"
         pole_F_segments[i] = _emit_pole_stack(bot, top, f"Pole_F{tag}_{i:03d}", coll_poles)
-        if use_terrain:
+        if use_terrain or terrain_meshes:
             j_len = ref_z - ground_z_front[i]
         else:
             j_len = jack_h
@@ -1115,9 +1800,13 @@ def generate_scaffold(props, context):
         p = nodes_back[i]
         bot = p.copy()
         top = p + Vector((0, 0, pole_height))
+        if walls and _pole_blocked_by_wall(bot, top, walls, volumes):
+            _LAST_WALL_RESULTS["poles_blocked"] += 1
+            pole_B_segments[i] = []
+            continue
         tag = "C" if is_corner[i] else "_"
         pole_B_segments[i] = _emit_pole_stack(bot, top, f"Pole_B{tag}_{i:03d}", coll_poles)
-        if use_terrain:
+        if use_terrain or terrain_meshes:
             j_len = ref_z - ground_z_back[i]
         else:
             j_len = jack_h
@@ -1146,6 +1835,19 @@ def generate_scaffold(props, context):
                 child_obj.matrix_parent_inverse = seg_world.inverted()
                 return
 
+    # Pre-calcular qué bays caen DENTRO de un Volume — esos se skipan enteros.
+    # Test point-in-volume sobre el centro XY del bay, a la altura media del andamio.
+    skipped_bays = set()
+    if volumes:
+        z_mid = ref_z + (floor_count * floor_h) * 0.5
+        for i in range(n_bays):
+            bay_mid = (nodes_front[i] + nodes_front[i + 1] +
+                       nodes_back[i] + nodes_back[i + 1]) * 0.25
+            bay_mid.z = z_mid
+            if _point_inside_volume(bay_mid, volumes):
+                skipped_bays.add(i)
+                _LAST_WALL_RESULTS["bays_skipped"] += 1
+
     # 2) Per floor: longitudinal ledgers, transverse ledgers, decks, rails, toe boards
     for f in range(1, floor_count + 1):
         z = f * floor_h
@@ -1153,12 +1855,14 @@ def generate_scaffold(props, context):
 
         # Longitudinal ledgers along front and back, per bay
         for i in range(n_bays):
+            if i in skipped_bays:
+                continue
             a = nodes_front[i] + zv
             b = nodes_front[i + 1] + zv
-            _make_tube(a, b, TUBE_DIAM, f"Ledger_F_F{f}_{i:03d}", coll_ledgers)
+            _emit_tube_clipped(a, b, TUBE_DIAM, f"Ledger_F_F{f}_{i:03d}", coll_ledgers, walls, volumes=volumes)
             a2 = nodes_back[i] + zv
             b2 = nodes_back[i + 1] + zv
-            _make_tube(a2, b2, TUBE_DIAM, f"Ledger_B_F{f}_{i:03d}", coll_ledgers)
+            _emit_tube_clipped(a2, b2, TUBE_DIAM, f"Ledger_B_F{f}_{i:03d}", coll_ledgers, walls, volumes=volumes)
             stats["ledgers"] += 2
 
         # Transverse ledgers at every node (front to back). At interior corners, the back
@@ -1174,7 +1878,8 @@ def generate_scaffold(props, context):
             else:
                 is_interior_corner = is_corner[i] and 0 < i < n_nodes - 1
             tag = "TC" if is_interior_corner else "T"
-            _make_tube(a, b, TUBE_DIAM, f"Ledger_{tag}_F{f}_{i:03d}", coll_ledgers)
+            _emit_tube_clipped(a, b, TUBE_DIAM, f"Ledger_{tag}_F{f}_{i:03d}",
+                               coll_ledgers, walls, volumes=volumes)
             stats["ledgers"] += 1
             if is_interior_corner:
                 stats["corner_ledgers"] = stats.get("corner_ledgers", 0) + 1
@@ -1182,6 +1887,8 @@ def generate_scaffold(props, context):
         # Decks per bay — solid, or pierced with a trapdoor when the bay carries an internal ladder
         if props.add_decks:
             for i in range(n_bays):
+                if i in skipped_bays:
+                    continue
                 seg = bay_segment[i]
                 fwd = forwards[seg]
                 prp = perps[seg]
@@ -1224,33 +1931,36 @@ def generate_scaffold(props, context):
                             continue
                         overlaps_hole = (py_min < hyR and py_max > hyL)
                         deck_z = ref_z + z + TUBE_DIAM * 0.5 + PLANK_THICKNESS * 0.5
+                        deck_z_top = deck_z + PLANK_THICKNESS * 0.5
                         if overlaps_hole:
                             for tag, x_min, x_max in (("a", xL, hxL), ("b", hxR, xR)):
-                                seg_len = x_max - x_min
-                                if seg_len <= 0.05:
+                                seg_len_local = x_max - x_min
+                                if seg_len_local <= 0.05:
                                     continue
-                                seg_cx = (x_min + x_max) * 0.5
-                                seg_c = bay_center + fwd * seg_cx + prp * plank_perp
-                                seg_c.z = deck_z
-                                _make_box(
-                                    seg_c,
-                                    (seg_len - 0.005, plank_w - 0.005, PLANK_THICKNESS),
+                                p_a = bay_center + fwd * x_min + prp * plank_perp
+                                p_b = bay_center + fwd * x_max + prp * plank_perp
+                                p_a.z = deck_z
+                                p_b.z = deck_z
+                                n = _emit_plank_with_walls(
+                                    p_a, p_b, plank_w, prp, walls,
                                     f"Deck_F{f}_{i:03d}_p{k}{tag}",
-                                    coll_decks,
-                                    rotation_z=yaw,
+                                    coll_decks, PLANK_THICKNESS, deck_z_top, yaw,
+                                    volumes=volumes,
                                 )
-                                stats["decks"] += 1
+                                stats["decks"] += n
                         else:
-                            plank_c = bay_center + prp * plank_perp
-                            plank_c.z = deck_z
-                            _make_box(
-                                plank_c,
-                                (max(0.1, bay_len - 0.01), plank_w - 0.005, PLANK_THICKNESS),
+                            half_bl = bay_len * 0.5
+                            p_a = bay_center - fwd * half_bl + prp * plank_perp
+                            p_b = bay_center + fwd * half_bl + prp * plank_perp
+                            p_a.z = deck_z
+                            p_b.z = deck_z
+                            n = _emit_plank_with_walls(
+                                p_a, p_b, plank_w, prp, walls,
                                 f"Deck_F{f}_{i:03d}_p{k}",
-                                coll_decks,
-                                rotation_z=yaw,
+                                coll_decks, PLANK_THICKNESS, deck_z_top, yaw,
+                                volumes=volumes,
                             )
-                            stats["decks"] += 1
+                            stats["decks"] += n
                     # Hinge sits OPPOSITE the lean: for dirn=+1 the hinge is on the -fwd
                     # side of the hole, for dirn=-1 on the +fwd side. The lid extends from
                     # the hinge in +dirn*fwd direction when closed and lifts up opening in
@@ -1259,6 +1969,22 @@ def generate_scaffold(props, context):
                     hinge_world = bay_center + fwd * hinge_local_x
                     hinge_world.z = ref_z + z + PLANK_THICKNESS
                     away = fwd.copy() * dirn
+                    # Si una pared o volumen cruza la zona del lid (entre la
+                    # bisagra y el borde libre), skipear toda la trampilla.
+                    # Como el lid es un objeto rígido rotado, no se puede
+                    # split — o se construye entero o se omite.
+                    if walls or volumes:
+                        free_edge_world = bay_center + fwd * free_edge_x
+                        free_edge_world.z = hinge_world.z
+                        lid_intervals = _clipping_intervals_combined(
+                            hinge_world, free_edge_world, walls, volumes,
+                        )
+                        if (not lid_intervals or
+                                (lid_intervals[0][1] - lid_intervals[0][0]) < 0.5):
+                            # Trampilla bloqueada por obstáculo: omitir Lid +
+                            # Hinge + Handle. La escalera del bay puede o no
+                            # también skiparse según `bay_skipped`.
+                            continue
                     lid_obj = _make_trapdoor_lid(
                         hinge_world=hinge_world,
                         hinge_dir_xy=prp,
@@ -1308,6 +2034,7 @@ def generate_scaffold(props, context):
                     plank_w = max(0.05, props.deck_plank_width)
                     half_total = n_planks * plank_w * 0.5
                     half_depth = depth * 0.5
+                    half_bl = bay_len * 0.5
                     for k in range(n_planks):
                         plank_perp = -half_total + (k + 0.5) * plank_w
                         # Skip if plank exceeds the bay's perp range
@@ -1316,13 +2043,22 @@ def generate_scaffold(props, context):
                             continue
                         plank_center = bay_center + prp * plank_perp
                         plank_center.z = ref_z + z + TUBE_DIAM * 0.5 + PLANK_THICKNESS * 0.5
-                        plank_obj = _make_box(
-                            plank_center,
-                            (max(0.1, bay_len - 0.01), plank_w - 0.005, PLANK_THICKNESS),
+                        # Clipping contra walls + volumes vía helper unificado
+                        deck_z_top = plank_center.z + PLANK_THICKNESS * 0.5
+                        p_start = plank_center - fwd * half_bl
+                        p_end = plank_center + fwd * half_bl
+                        n_emitted = _emit_plank_with_walls(
+                            p_start, p_end, plank_w, prp, walls,
                             f"Deck_F{f}_{i:03d}_p{k}",
-                            coll_decks,
-                            rotation_z=yaw,
+                            coll_decks, PLANK_THICKNESS, deck_z_top, yaw,
+                            volumes=volumes,
                         )
+                        if n_emitted == 0:
+                            continue
+                        # Catalog binding solo aplica si el plank quedó intacto (1 pieza, full size).
+                        plank_obj = bpy.data.objects.get(f"Deck_F{f}_{i:03d}_p{k}")
+                        if plank_obj is None or plank_obj.get("andamio_custom_length"):
+                            continue
                         # Catalog binding (Fase 2): each solid plank gets a Ringlock EU
                         # catalog deck_id that best matches its (length, width, material).
                         deck_id, len_err_mm, w_err_mm, exact = _find_matching_deck(
@@ -1373,42 +2109,62 @@ def generate_scaffold(props, context):
             for rail_h, tag in ((0.5, "mid"), (1.0, "top")):
                 rz = Vector((0, 0, rail_h))
                 for i in range(n_bays):
+                    if i in skipped_bays:
+                        continue
                     a = nodes_front[i] + zv + rz
                     b = nodes_front[i + 1] + zv + rz
-                    _make_tube(a, b, TUBE_DIAM * 0.85, f"Rail_F_{tag}_F{f}_{i:03d}", coll_rails)
+                    _emit_tube_clipped(a, b, TUBE_DIAM * 0.85,
+                                       f"Rail_F_{tag}_F{f}_{i:03d}", coll_rails, walls, volumes=volumes)
                     a2 = nodes_back[i] + zv + rz
                     b2 = nodes_back[i + 1] + zv + rz
-                    _make_tube(a2, b2, TUBE_DIAM * 0.85, f"Rail_B_{tag}_F{f}_{i:03d}", coll_rails)
+                    _emit_tube_clipped(a2, b2, TUBE_DIAM * 0.85,
+                                       f"Rail_B_{tag}_F{f}_{i:03d}", coll_rails, walls, volumes=volumes)
                     stats["rails"] += 2
             for i in range(n_bays):
+                if i in skipped_bays:
+                    continue
                 seg = bay_segment[i]
                 fwd = forwards[seg]
                 yaw = atan2(fwd.y, fwd.x)
                 bay_len = (nodes_front[i + 1] - nodes_front[i]).length
                 # Toeboards extend the FULL bay length so adjacent bays meet exactly at the
                 # poles (no 5 cm gap at the corner). Standardised piece length stays = bay_len.
-                cf = (nodes_front[i] + nodes_front[i + 1]) * 0.5 + zv + Vector((0, 0, TOEBOARD_HEIGHT * 0.5 + PLANK_THICKNESS))
-                _make_box(
-                    cf,
-                    (max(0.1, bay_len), 0.025, TOEBOARD_HEIGHT),
-                    f"Toe_F_F{f}_{i:03d}",
-                    coll_rails,
-                    rotation_z=yaw,
-                )
+                z_off = Vector((0, 0, TOEBOARD_HEIGHT * 0.5 + PLANK_THICKNESS))
+                p_f1 = nodes_front[i] + zv + z_off
+                p_f2 = nodes_front[i + 1] + zv + z_off
+                f_intervals = _free_intervals(p_f1, p_f2, walls) if walls else [(0.0, 1.0)]
+                for sub_idx, (t0, t1) in enumerate(f_intervals):
+                    sub_len = (t1 - t0) * bay_len
+                    if sub_len < 0.20:
+                        continue
+                    sub_center = p_f1 + (p_f2 - p_f1) * ((t0 + t1) * 0.5)
+                    sub_name = (f"Toe_F_F{f}_{i:03d}" if len(f_intervals) == 1
+                                else f"Toe_F_F{f}_{i:03d}_w{sub_idx}")
+                    _make_box(
+                        sub_center,
+                        (max(0.1, sub_len), 0.025, TOEBOARD_HEIGHT),
+                        sub_name, coll_rails, rotation_z=yaw,
+                    )
                 # Back toeboard length matches the back row's actual segment length, which at
                 # interior corners may be slightly different from bay_len (bisector offset).
                 back_len = (nodes_back[i + 1] - nodes_back[i]).length
-                cb = (nodes_back[i] + nodes_back[i + 1]) * 0.5 + zv + Vector((0, 0, TOEBOARD_HEIGHT * 0.5 + PLANK_THICKNESS))
-                # Re-derive yaw for the back toeboard so it rotates along the back-row chord
                 back_dir = (nodes_back[i + 1] - nodes_back[i])
                 back_yaw = atan2(back_dir.y, back_dir.x) if back_dir.length > 1e-6 else yaw
-                _make_box(
-                    cb,
-                    (max(0.1, back_len), 0.025, TOEBOARD_HEIGHT),
-                    f"Toe_B_F{f}_{i:03d}",
-                    coll_rails,
-                    rotation_z=back_yaw,
-                )
+                p_b1 = nodes_back[i] + zv + z_off
+                p_b2 = nodes_back[i + 1] + zv + z_off
+                b_intervals = _clipping_intervals_combined(p_b1, p_b2, walls, volumes) if (walls or volumes) else [(0.0, 1.0)]
+                for sub_idx, (t0, t1) in enumerate(b_intervals):
+                    sub_len = (t1 - t0) * back_len
+                    if sub_len < 0.20:
+                        continue
+                    sub_center = p_b1 + (p_b2 - p_b1) * ((t0 + t1) * 0.5)
+                    sub_name = (f"Toe_B_F{f}_{i:03d}" if len(b_intervals) == 1
+                                else f"Toe_B_F{f}_{i:03d}_w{sub_idx}")
+                    _make_box(
+                        sub_center,
+                        (max(0.1, sub_len), 0.025, TOEBOARD_HEIGHT),
+                        sub_name, coll_rails, rotation_z=back_yaw,
+                    )
                 stats["rails"] += 2
 
             # End-cap rails AND toeboard at the open ends of the polyline. Closed loops
@@ -1420,7 +2176,9 @@ def generate_scaffold(props, context):
                         rz = Vector((0, 0, rail_h))
                         a = nodes_front[end_idx] + zv + rz
                         b = nodes_back[end_idx] + zv + rz
-                        _make_tube(a, b, TUBE_DIAM * 0.85, f"Rail_E_{tag}_F{f}_{end_idx:03d}", coll_rails)
+                        _emit_tube_clipped(a, b, TUBE_DIAM * 0.85,
+                                           f"Rail_E_{tag}_F{f}_{end_idx:03d}",
+                                           coll_rails, walls, volumes=volumes)
                         stats["rails"] += 1
                     # Transverse toeboard at the open end
                     fp = nodes_front[end_idx] + zv
@@ -1466,13 +2224,17 @@ def generate_scaffold(props, context):
                         f_dir = f_dir.normalized()
                         a = cf_pos - f_dir * 0.10
                         b = cf_pos + f_dir * 0.10
-                        _make_tube(a, b, TUBE_DIAM * 0.85, f"Rail_C_{tag}_F{f}_{k:03d}_F", coll_rails)
+                        _emit_tube_clipped(a, b, TUBE_DIAM * 0.85,
+                                           f"Rail_C_{tag}_F{f}_{k:03d}_F",
+                                           coll_rails, walls, volumes=volumes)
                         stats["rails"] += 1
                     # Back rail caps along the bisector at back_corner_k
                     cb_pos = nodes_back[k] + zv + rz
                     a2 = cb_pos - bis * 0.10
                     b2 = cb_pos + bis * 0.10
-                    _make_tube(a2, b2, TUBE_DIAM * 0.85, f"Rail_C_{tag}_F{f}_{k:03d}_B", coll_rails)
+                    _emit_tube_clipped(a2, b2, TUBE_DIAM * 0.85,
+                                       f"Rail_C_{tag}_F{f}_{k:03d}_B",
+                                       coll_rails, walls, volumes=volumes)
                     stats["rails"] += 1
 
             wedge_range = range(0, n_unique_nodes) if closed else range(1, n_nodes - 1)
@@ -1504,14 +2266,27 @@ def generate_scaffold(props, context):
     HEAD_DIAM = TUBE_DIAM * 1.20
 
     def _emit_brace(a, b, name_prefix):
-        _make_tube(a, b, TUBE_DIAM * 0.85, name_prefix, coll_braces)
+        # Si el segmento de la cruz cruza un wall o entra en un volume, lo
+        # cortamos. Si queda < 30 cm libre, no se emite.
+        emitted = _emit_tube_clipped(a, b, TUBE_DIAM * 0.85, name_prefix,
+                                      coll_braces, walls, volumes=volumes)
+        if not emitted:
+            return  # cruz totalmente bloqueada
         axis = b - a
         if axis.length > 1e-6:
             axis_n = axis.normalized()
             a_head = a + axis_n * (HEAD_LEN * 0.5)
             b_head = b - axis_n * (HEAD_LEN * 0.5)
-            _make_tube(a - axis_n * 0.005, a_head, HEAD_DIAM, f"{name_prefix}_capA", coll_braces)
-            _make_tube(b_head, b + axis_n * 0.005, HEAD_DIAM, f"{name_prefix}_capB", coll_braces)
+            # Las cabezas (acoples) sólo se ponen si el extremo correspondiente
+            # del tubo cruz no está bloqueado.
+            if not _emit_tube_clipped(a - axis_n * 0.005, a_head, HEAD_DIAM,
+                                      f"{name_prefix}_capA", coll_braces, walls,
+                                      volumes=volumes):
+                pass
+            if not _emit_tube_clipped(b_head, b + axis_n * 0.005, HEAD_DIAM,
+                                      f"{name_prefix}_capB", coll_braces, walls,
+                                      volumes=volumes):
+                pass
 
     # Subdivisión de la cruce en sub-tramos zigzag entre rosetas intermedias.
     # subdivs=1 → cruce esquina a esquina (default). subdivs=2/4 → patrón N
@@ -1557,6 +2332,8 @@ def generate_scaffold(props, context):
                     continue
                 if i in ladder_bays:
                     continue
+                if i in skipped_bays:
+                    continue
                 if i < len(bay_is_compensation) and bay_is_compensation[i]:
                     continue
                 # Decide which face(s) get the diagonal based on the pattern
@@ -1600,11 +2377,15 @@ def generate_scaffold(props, context):
                     continue
                 if i in ladder_bays:
                     continue
+                if i in skipped_bays:
+                    continue
                 if i < len(bay_is_compensation) and bay_is_compensation[i]:
                     continue
                 a = nodes_front[i] + zv_h
                 b = nodes_back[i + 1] + zv_h
-                _make_tube(a, b, TUBE_DIAM * 0.85, f"HBrace_F{f}_{i:03d}", coll_braces)
+                _emit_tube_clipped(a, b, TUBE_DIAM * 0.85,
+                                   f"HBrace_F{f}_{i:03d}", coll_braces,
+                                   walls, volumes=volumes)
                 stats["braces"] += 1
 
     # 4) Inclined ladders — one per floor, tilted LADDER_TILT_DEG° in the +forward direction.
@@ -1613,6 +2394,8 @@ def generate_scaffold(props, context):
     if ladder_bays:
         rungs_per_floor = max(2, int(round(floor_h / 0.28)))
         for i in sorted(ladder_bays):
+            if i in skipped_bays:
+                continue
             seg = bay_segment[i]
             fwd = forwards[seg]
             prp = perps[seg]
@@ -1648,6 +2431,9 @@ def generate_scaffold(props, context):
                     side_axis=prp,
                 )
                 if props.add_ladder_handrail:
+                    # El handrail no debe atravesar la plataforma del piso de
+                    # arriba: lo recortamos a 2 cm bajo el nivel de ese deck.
+                    deck_z_above = ref_z + (f_idx + 1) * floor_h - 0.02
                     _ladder_handrail(
                         base, top,
                         side_axis=prp,
@@ -1655,6 +2441,7 @@ def generate_scaffold(props, context):
                         height=props.ladder_handrail_height,
                         name=f"Ladder_{i:03d}_F{f_idx}",
                         coll=coll_ladders,
+                        deck_z_clamp=deck_z_above,
                     )
                 # Foot plate under the ladder base on the floor below (visual support)
                 foot_z = z_bot + 0.01
@@ -1718,7 +2505,9 @@ def generate_scaffold(props, context):
                 front_anchor = nodes_front[i].copy()
                 front_anchor.z = ref_z + f * floor_h
                 wall_point = front_anchor - prp * tie_len
-                _make_tube(front_anchor, wall_point, TUBE_DIAM * 0.7, f"Tie_F{f}_{i:03d}", coll_ties)
+                _emit_tube_clipped(front_anchor, wall_point, TUBE_DIAM * 0.7,
+                                   f"Tie_F{f}_{i:03d}", coll_ties,
+                                   walls, volumes=volumes)
 
     # 6) Apply per-category viewport colours so each component type is distinguishable
     _apply_category_materials(root, props)
@@ -1926,10 +2715,18 @@ def _auto_unregister():
 
 
 _PRESETS = {
-    'LAYHER_73':  {'scaffold_depth': 0.732, 'deck_planks_count': 2, 'deck_plank_width': 0.32, 'bay_length_catalog': 'LAYHER'},
-    'LAYHER_109': {'scaffold_depth': 1.090, 'deck_planks_count': 3, 'deck_plank_width': 0.32, 'bay_length_catalog': 'LAYHER'},
+    'LAYHER_73':  {'scaffold_depth': 0.732, 'deck_planks_count': 2, 'deck_plank_width': 0.32, 'bay_length_catalog': 'LAYHER', 'pole_length_catalog': 'LAYHER'},
+    'LAYHER_109': {'scaffold_depth': 1.090, 'deck_planks_count': 3, 'deck_plank_width': 0.32, 'bay_length_catalog': 'LAYHER', 'pole_length_catalog': 'LAYHER'},
     'GENERIC_1M': {'scaffold_depth': 1.000, 'deck_planks_count': 3, 'deck_plank_width': 0.32, 'bay_length_catalog': 'GENERIC'},
     'NARROW':     {'scaffold_depth': 0.640, 'deck_planks_count': 2, 'deck_plank_width': 0.32, 'bay_length_catalog': 'GENERIC'},
+    # Multi-fabricante (Fase I) — dimensiones según catálogo público de cada
+    # sistema; ver calc/catalogs.py para fuentes y pesos.
+    'PERI_UP_75':    {'scaffold_depth': 0.75, 'deck_planks_count': 3, 'deck_plank_width': 0.25,  'bay_length_catalog': 'PERI', 'pole_length_catalog': 'PERI'},
+    'PERI_UP_100':   {'scaffold_depth': 1.00, 'deck_planks_count': 4, 'deck_plank_width': 0.25,  'bay_length_catalog': 'PERI', 'pole_length_catalog': 'PERI'},
+    'ULMA_BRIO_70':  {'scaffold_depth': 0.70, 'deck_planks_count': 2, 'deck_plank_width': 0.32,  'bay_length_catalog': 'ULMA', 'pole_length_catalog': 'ULMA'},
+    'ULMA_BRIO_102': {'scaffold_depth': 1.02, 'deck_planks_count': 3, 'deck_plank_width': 0.32,  'bay_length_catalog': 'ULMA', 'pole_length_catalog': 'ULMA'},
+    'DOKA_73':       {'scaffold_depth': 0.73, 'deck_planks_count': 2, 'deck_plank_width': 0.32,  'bay_length_catalog': 'DOKA', 'pole_length_catalog': 'DOKA'},
+    'DOKA_109':      {'scaffold_depth': 1.09, 'deck_planks_count': 3, 'deck_plank_width': 0.32,  'bay_length_catalog': 'DOKA', 'pole_length_catalog': 'DOKA'},
 }
 
 
@@ -2090,6 +2887,12 @@ class ANDAMIOS_Props(PropertyGroup):
             ('LAYHER_109', "Layher 109",    "Profundidad 1.09 m, 3 bandejas, catálogo Layher"),
             ('GENERIC_1M', "Genérico 1 m",  "Profundidad 1.0 m, 3 bandejas, catálogo Genérico"),
             ('NARROW',     "Estrecho",      "Profundidad 0.64 m, 2 bandejas, catálogo Genérico"),
+            ('PERI_UP_75',    "PERI UP 75",    "Profundidad 0.75 m, 3 bandejas de 0.25 m, catálogo PERI UP Rosett Flex (retícula 25 cm)"),
+            ('PERI_UP_100',   "PERI UP 100",   "Profundidad 1.0 m, 4 bandejas de 0.25 m, catálogo PERI UP Rosett Flex (retícula 25 cm)"),
+            ('ULMA_BRIO_70',  "ULMA BRIO 70",  "Profundidad 0.7 m, 2 bandejas, catálogo ULMA BRIO (brazos 0.35–3.0 m)"),
+            ('ULMA_BRIO_102', "ULMA BRIO 102", "Profundidad 1.02 m, 3 bandejas, catálogo ULMA BRIO (brazos 0.35–3.0 m)"),
+            ('DOKA_73',       "Doka 73",       "Profundidad 0.73 m, 2 bandejas, catálogo Doka Ringlock S (largueros 0.39–3.07 m)"),
+            ('DOKA_109',      "Doka 109",      "Profundidad 1.09 m, 3 bandejas, catálogo Doka Ringlock S (largueros 0.39–3.07 m)"),
         ],
         default='CUSTOM',
         description="Preset que ajusta profundidad, número/ancho de bandejas y catálogo de longitudes",
@@ -2123,6 +2926,9 @@ class ANDAMIOS_Props(PropertyGroup):
             ('GENERIC', "Mixto múltiplos 0,5 m", "Combina piezas de 1.0/1.5/2.0/2.5/3.0 m. Encaja exacto con planificaciones en múltiplos de 0.5 m"),
             ('LAYHER',  "Layher Allround (catálogo real)", "Combina piezas Layher reales: 0.73/1.09/1.40/1.57/1.73/2.07/2.57/3.07 m"),
             ('UNIFORM', "Iguales (divide en N partes)",  "Reparte el tramo en partes iguales del tamaño 'Longitud objetivo' (ningún vano estandarizado)"),
+            ('PERI',    "PERI UP Rosett Flex (catálogo real)", "Combina largueros UH Plus reales: 0.25–3.0 m en retícula de 25 cm"),
+            ('ULMA',    "ULMA BRIO (catálogo real)", "Combina brazos BRIO reales: 0.35/0.7/1.02/1.5/2.0/2.5/3.0 m"),
+            ('DOKA',    "Doka Ringlock S (catálogo real)", "Combina largueros Ringlock S reales: 0.39/0.73/1.04/1.09/1.40/1.57/2.07/2.57/3.07 m"),
         ],
         default='GENERIC',
         description="Cómo subdividir cada tramo HORIZONTAL de la polilínea en vanos (longitud entre postes). Las dos primeras opciones usan piezas estándar + pieza de compensación al final del tramo si no encaja exacto",
@@ -2176,6 +2982,9 @@ class ANDAMIOS_Props(PropertyGroup):
             ('UNIFORM', "Uniforme (longitud fija)",        "Usa el valor 'Longitud poste' como tamaño único del segmento (modo legacy)"),
             ('GENERIC', "Mixto múltiplos 0,5 m",           "Combina piezas de 0.5/1.0/1.5/2.0/2.5/3.0 m hasta cubrir la altura"),
             ('LAYHER',  "Layher Allround (catálogo real)", "Combina piezas Layher reales: 0.5/1.0/1.5/2.0/3.0/4.0 m"),
+            ('PERI',    "PERI UP Rosett Flex (catálogo real)", "Combina verticales UVR reales: 0.5/1.0/1.5/2.0/3.0/4.0 m"),
+            ('ULMA',    "ULMA BRIO (catálogo real)",       "Combina pies BRIO reales: 1.0/1.5/2.0/3.0/4.0 m"),
+            ('DOKA',    "Doka Ringlock S (catálogo real)", "Combina verticales Ringlock S reales: 0.5–3.0 m en pasos de 0.5 m"),
         ],
         default='UNIFORM',
         description="Cómo segmentar cada poste VERTICAL en piezas. Los modos Mixto y Layher combinan piezas estándar hasta cubrir la altura completa de cada poste",
@@ -2719,18 +3528,137 @@ class ANDAMIOS_OT_generate(Operator):
         props = context.scene.andamios_props
         try:
             from calc import diagnostics as _diag
+            path_objs = _path_objects(props)
+            tramos = _split_path_by_z_jumps(
+                path_objs, terrain_meshes=_get_terrain_meshes(),
+            )
             with _diag.breadcrumb_op(
                 "manual_generate",
-                n_path=len(_path_objects(props)),
+                n_path=len(path_objs),
+                n_tramos=len(tramos),
                 floors=int(getattr(props, "floor_count", 0)),
                 catalog=str(getattr(props, "bay_length_catalog", "?")),
             ):
-                stats = generate_scaffold(props, context)
+                if len(tramos) <= 1:
+                    stats = generate_scaffold(props, context)
+                else:
+                    # Multi-tramo: cambiar temporalmente path_points por cada
+                    # sub-trayectoria, llamar generate_scaffold N veces y
+                    # prefijar los nombres de objetos por tramo (T0_, T1_…)
+                    # para que el BOM y el outliner los agrupen sin colisiones
+                    # automáticas tipo `.001`.
+                    import re
+                    _TRAMO_PREFIX_RE = re.compile(r"^T\d+_")
+
+                    def _scaffold_objs():
+                        coll = bpy.data.collections.get(SCAFFOLD_COLLECTION)
+                        if coll is None:
+                            return []
+                        out = list(coll.objects)
+                        for c in coll.children_recursive:
+                            out.extend(c.objects)
+                        return out
+
+                    def _prefix_unprefixed(prefix):
+                        for obj in _scaffold_objs():
+                            if not _TRAMO_PREFIX_RE.match(obj.name):
+                                obj.name = f"{prefix}{obj.name}"
+
+                    original_objs = [pt.obj for pt in props.path_points]
+                    original_idx = props.active_path_index
+                    merged_stats = None
+                    try:
+                        for ti, tramo_objs in enumerate(tramos):
+                            # Antes de crear este tramo, prefijar todo lo que
+                            # haya quedado del anterior (sin prefijo) con
+                            # T{ti-1}_ — esto evita colisiones cuando el nuevo
+                            # tramo crea objetos con los mismos nombres.
+                            if ti > 0:
+                                _prefix_unprefixed(f"T{ti - 1}_")
+                            props.path_points.clear()
+                            for o in tramo_objs:
+                                pt = props.path_points.add()
+                                pt.obj = o
+                            props.active_path_index = 0
+                            tramo_stats = generate_scaffold(
+                                props, context, clear_first=(ti == 0),
+                            )
+                            if merged_stats is None:
+                                merged_stats = dict(tramo_stats)
+                            else:
+                                for k, v in tramo_stats.items():
+                                    if isinstance(v, (int, float)):
+                                        merged_stats[k] = (
+                                            merged_stats.get(k, 0) + v
+                                        )
+                        stats = merged_stats
+                        # Prefijar el último tramo
+                        _prefix_unprefixed(f"T{len(tramos) - 1}_")
+                    finally:
+                        props.path_points.clear()
+                        for o in original_objs:
+                            pt = props.path_points.add()
+                            if o is not None:
+                                pt.obj = o
+                        props.active_path_index = min(
+                            original_idx, len(props.path_points) - 1,
+                        )
         except Exception as e:
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
         msg = _format_summary(stats)
+        if len(tramos) > 1:
+            msg = f"{len(tramos)} tramos escalonados  |  " + msg
         props.last_summary = msg
+        if _LAST_MITER_CLAMPED:
+            n = len(_LAST_MITER_CLAMPED)
+            self.report(
+                {'WARNING'},
+                iface_("Ángulo muy agudo en %d esquina(s) — miter limitado a %.1f×depth")
+                % (n, MAX_MITER_OFFSET_FACTOR),
+            )
+        for kind, n in _LAST_TERRAIN_WARNINGS:
+            if kind == "no_hit":
+                self.report(
+                    {'WARNING'},
+                    iface_("%d poste(s) sin terreno bajo su XY — usando base_z como fallback")
+                    % n,
+                )
+            elif kind == "jack_too_long":
+                self.report(
+                    {'WARNING'},
+                    iface_("%d husillo(s) > %.0f cm (máximo comercial) — eleva jack_height o redirige")
+                    % (n, _MAX_JACK_LENGTH_M * 100),
+                )
+        if _LAST_WALL_RESULTS["decks_trimmed"]:
+            self.report(
+                {'WARNING'},
+                iface_("%d plataforma(s) recortadas por pared — pieza custom no catalogada")
+                % _LAST_WALL_RESULTS["decks_trimmed"],
+            )
+        if _LAST_WALL_RESULTS["decks_skipped"]:
+            self.report(
+                {'WARNING'},
+                iface_("%d plataforma(s) omitidas — espacio libre < %.0f cm")
+                % (_LAST_WALL_RESULTS["decks_skipped"], _MIN_DECK_PIECE_M * 100),
+            )
+        if _LAST_WALL_RESULTS["poles_blocked"]:
+            self.report(
+                {'ERROR'},
+                iface_("%d poste(s) caen DENTRO de una pared o volumen — redirige la trayectoria")
+                % _LAST_WALL_RESULTS["poles_blocked"],
+            )
+        if _LAST_WALL_RESULTS["bays_skipped"]:
+            self.report(
+                {'WARNING'},
+                iface_("%d vano(s) skipados — su centro cae dentro de un Volume_*")
+                % _LAST_WALL_RESULTS["bays_skipped"],
+            )
+        if _LAST_WALL_RESULTS["obstacles_present"]:
+            self.report(
+                {'WARNING'},
+                iface_("Obstáculos detectados — el cálculo FEM puede no ser válido para esta geometría"),
+            )
         self.report({'INFO'}, msg)
         return {'FINISHED'}
 
@@ -3015,9 +3943,9 @@ class ANDAMIOS_PT_panel(Panel):
         op.at_cursor = True
         box.prop(props, "base_z")
         box.prop(props, "jack_height")
-        # Catálogo de postes (selector en línea como con bays)
-        row_pc = box.row(align=True)
-        row_pc.prop(props, "pole_length_catalog", expand=True)
+        # Catálogo de postes: dropdown — con 6 sistemas la fila expandida
+        # comprime las etiquetas hasta hacerlas ilegibles ("Lay…|PER…|ULM…")
+        box.prop(props, "pole_length_catalog", text="Catálogo postes")
         sub_pl = box.row()
         sub_pl.enabled = (props.pole_length_catalog == 'UNIFORM')
         sub_pl.prop(props, "pole_segment_length")
@@ -3031,9 +3959,9 @@ class ANDAMIOS_PT_panel(Panel):
 
         box = layout.box()
         box.label(text="Dimensiones", icon='ARROW_LEFTRIGHT')
-        # Catálogo de longitudes como botones expandidos
-        row = box.row(align=True)
-        row.prop(props, "bay_length_catalog", expand=True)
+        # Catálogo de longitudes: dropdown (ídem postes — 6 sistemas no
+        # caben como botones expandidos)
+        box.prop(props, "bay_length_catalog", text="Catálogo vanos")
         # section_length sólo aplica con UNIFORM
         sec = box.row()
         sec.enabled = (props.bay_length_catalog == 'UNIFORM')
@@ -3135,17 +4063,72 @@ class ANDAMIOS_PT_panel(Panel):
         sub_t2.enabled = props.add_ties
         sub_t2.prop(props, "tie_length")
 
-        # ── Catálogo Ringlock EU de bandejas (Fase 1) ───────────────────────
-        box = layout.box()
-        box.label(text="Bandejas — Catálogo Ringlock EU", icon='MESH_PLANE')
-        rowf = box.row(align=True)
+        # Bandejas, Colores y Reporte de errores se han movido a sub-paneles
+        # colapsables (ANDAMIOS_PT_decks_catalog, ANDAMIOS_PT_colors,
+        # ANDAMIOS_PT_diag) — ver el final de este archivo.
+
+        col = layout.column(align=True)
+        col.scale_y = 1.4
+        col.operator("andamios.generate", text="Generar / Actualizar", icon='FILE_REFRESH')
+        row = layout.row(align=True)
+        row.operator("andamios.clear", icon='X')
+        row.operator("andamios.export_bom", icon='EXPORT')
+        layout.prop(props, "auto_update", icon='AUTO')
+
+        if props.last_summary:
+            box = layout.box()
+            box.label(text="Resumen:", icon='INFO')
+            for line in props.last_summary.split("  |  "):
+                box.label(text=line)
+
+        # Aviso prominente cuando hay obstáculos en escena: el cálculo FEM
+        # actual asume estructura periódica y NO está validado para piezas
+        # custom o vanos skipados (Fase A/B/D). Sin esto, el cálculo puede
+        # arrojar resultados inconsistentes con la geometría visible.
+        if _LAST_WALL_RESULTS.get("obstacles_present"):
+            warn_box = layout.box()
+            r = warn_box.row()
+            r.alert = True
+            r.label(text="⚠ Obstáculos detectados", icon='ERROR')
+            sub = warn_box.column(align=True)
+            sub.scale_y = 0.85
+            sub.label(text="El cálculo FEM no está validado")
+            sub.label(text="para piezas custom o vanos skipados.")
+            sub.label(text="Úsalo solo como referencia visual.")
+
+        # Reporte de errores → ahora en ANDAMIOS_PT_diag (sub-panel colapsable)
+
+
+# ---------------------------------------------------------------------------
+# Sub-paneles colapsables del panel principal (P5)
+# ---------------------------------------------------------------------------
+
+class _AndamiosSubPanelBase:
+    """Mixin común: vive bajo ANDAMIOS_PT_panel, en categoría Andamios."""
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Andamios"
+    bl_parent_id = "ANDAMIOS_PT_panel"
+    bl_options = {'DEFAULT_CLOSED'}
+
+
+class ANDAMIOS_PT_decks_catalog(_AndamiosSubPanelBase, Panel):
+    """Catálogo Ringlock EU de bandejas, validador de cobertura y operadores
+    de auditoría / auto-cubrir."""
+    bl_idname = "ANDAMIOS_PT_decks_catalog"
+    bl_label = "Bandejas — Catálogo Ringlock EU"
+
+    def draw(self, context):
+        layout = self.layout
+        props = context.scene.andamios_props
+        rowf = layout.row(align=True)
         rowf.prop(props, "deck_filter_width", text="Ancho")
         rowf.prop(props, "deck_filter_class", text="Clase")
         rowf.prop(props, "deck_filter_material", text="Material")
-        box.prop(props, "selected_deck_id", text="")
+        layout.prop(props, "selected_deck_id", text="")
         spec = _deck_spec(props.selected_deck_id)
         if spec is not None:
-            info = box.column(align=True)
+            info = layout.column(align=True)
             info.label(
                 text=iface_("%.2f m × %.2f m · %s") % (
                     spec['nominal_length'], spec['deck_width'], spec['construction_type'],
@@ -3167,11 +4150,11 @@ class ANDAMIOS_PT_panel(Panel):
             )
             if spec.get("is_estimated"):
                 info.label(text=iface_("⚠ Valores estructurales conservadores estimados"), icon='ERROR')
-        # Indicador de cobertura: hueco perp entre las N bandejas y el back row.
+        gap_perp_mm = 0.0
         if props.add_decks:
             tot_planks_w = props.deck_planks_count * props.deck_plank_width
             gap_perp_mm = (props.scaffold_depth - tot_planks_w) * 1000.0
-            cov = box.row()
+            cov = layout.row()
             if gap_perp_mm > DECK_GAP_MAX_MM:
                 cov.label(
                     text=iface_("⚠ Hueco perp %.0f mm > %d mm (EN 12811-1)") % (
@@ -3191,31 +4174,36 @@ class ANDAMIOS_PT_panel(Panel):
                     ),
                     icon='CHECKMARK',
                 )
-        # Sugerencia de combinación (visible siempre que el hueco esté fuera de tolerancia)
-        if props.add_decks:
             sug = _suggest_deck_cover(props.scaffold_depth, DECK_GAP_MAX_MM)
             current_gap_in_tol = 0 <= gap_perp_mm <= DECK_GAP_MAX_MM
             if not current_gap_in_tol and sug["within_tol"]:
                 w_txt = " + ".join(f"{w:.2f}" for w in sug["widths"])
-                box.label(
+                layout.label(
                     text=iface_("💡 Sugerido: %s m → hueco %.0f mm") % (
                         w_txt, sug['gap_mm'],
                     ),
                     icon='LIGHT',
                 )
-        # Botones de auditoría y auto-cubrir
-        row_da = box.row(align=True)
+        row_da = layout.row(align=True)
         row_da.operator("andamios.deck_audit", icon='VIEWZOOM')
         row_da.operator("andamios.deck_auto_cover", icon='SHADERFX')
 
-        # Colores agrupados por función: Estructura · Acceso · Seguridad
-        box = layout.box()
-        head = box.row(align=True)
-        head.label(text="Colores", icon='COLOR')
+
+class ANDAMIOS_PT_colors(_AndamiosSubPanelBase, Panel):
+    """Colores agrupados por función estructural (Estructura · Acceso ·
+    Seguridad)."""
+    bl_idname = "ANDAMIOS_PT_colors"
+    bl_label = "Colores"
+
+    def draw(self, context):
+        layout = self.layout
+        props = context.scene.andamios_props
+        head = layout.row(align=True)
+        head.label(text="Restablecer", icon='COLOR')
         head.operator("andamios.reset_colors", text="", icon='LOOP_BACK')
 
-        box.label(text="Estructura", icon='MOD_BUILD')
-        g1 = box.grid_flow(row_major=True, columns=2, even_columns=True, even_rows=True, align=True)
+        layout.label(text="Estructura", icon='MOD_BUILD')
+        g1 = layout.grid_flow(row_major=True, columns=2, even_columns=True, even_rows=True, align=True)
         g1.prop(props, "color_postes", text="Postes")
         g1.prop(props, "color_travesanos", text="Travesaños")
         g1.prop(props, "color_cruces", text="Cruces")
@@ -3223,41 +4211,112 @@ class ANDAMIOS_PT_panel(Panel):
         g1.prop(props, "color_husillos", text="Husillos")
         g1.prop(props, "color_acoples", text="Acoples")
 
-        box.separator()
-        box.label(text="Acceso", icon='ANIM')
-        g2 = box.grid_flow(row_major=True, columns=2, even_columns=True, even_rows=True, align=True)
+        layout.separator()
+        layout.label(text="Acceso", icon='ANIM')
+        g2 = layout.grid_flow(row_major=True, columns=2, even_columns=True, even_rows=True, align=True)
         g2.prop(props, "color_plataformas", text="Plataformas")
         g2.prop(props, "color_escaleras", text="Escaleras")
         g2.prop(props, "color_trampillas", text="Trampillas")
 
-        box.separator()
-        box.label(text="Seguridad", icon='LOCKED')
-        g3 = box.grid_flow(row_major=True, columns=2, even_columns=True, even_rows=True, align=True)
+        layout.separator()
+        layout.label(text="Seguridad", icon='LOCKED')
+        g3 = layout.grid_flow(row_major=True, columns=2, even_columns=True, even_rows=True, align=True)
         g3.prop(props, "color_barandillas", text="Barandillas")
 
-        col = layout.column(align=True)
-        col.scale_y = 1.4
-        col.operator("andamios.generate", text="Generar / Actualizar", icon='FILE_REFRESH')
+
+class ANDAMIOS_PT_obstacles(_AndamiosSubPanelBase, Panel):
+    """Entorno detectado: muestra los meshes con prefijos Terrain_/Wall_/
+    Volume_ que el addon usa para adaptar el andamio (Fase A/B/D). Si la
+    collection `obstaculos` no existe, muestra instrucciones inline."""
+    bl_idname = "ANDAMIOS_PT_obstacles"
+    bl_label = "Entorno (obstáculos)"
+
+    def draw(self, context):
+        layout = self.layout
+        # Buscar la collection
+        coll = None
+        for name in _OBSTACLES_COLLECTION_NAMES:
+            coll = bpy.data.collections.get(name)
+            if coll is not None:
+                break
+
+        if coll is None:
+            help_box = layout.box()
+            help_box.label(text="Sin collection 'obstaculos'", icon='INFO')
+            sub = help_box.column(align=True)
+            sub.scale_y = 0.85
+            sub.label(text="Crea una collection llamada")
+            sub.label(text="'obstaculos' y mete meshes con")
+            sub.label(text="estos prefijos:")
+            sub.separator()
+            sub.label(text="• Terrain_*  → suelo (Fase A)")
+            sub.label(text="• Wall_*     → pared (Fase B)")
+            sub.label(text="• Volume_*   → volumen (Fase D)")
+            return
+
+        terrains = _get_terrain_meshes()
+        walls = _get_wall_meshes()
+        volumes = _get_volume_meshes()
+
+        # Conteos en una fila
         row = layout.row(align=True)
-        row.operator("andamios.clear", icon='X')
-        row.operator("andamios.export_bom", icon='EXPORT')
-        layout.prop(props, "auto_update", icon='AUTO')
+        row.label(text=f"🟢 {len(terrains)}", icon='MESH_GRID')
+        row.label(text=f"🟧 {len(walls)}", icon='MESH_PLANE')
+        row.label(text=f"🟦 {len(volumes)}", icon='MESH_CUBE')
 
-        if props.last_summary:
-            box = layout.box()
-            box.label(text="Resumen:", icon='INFO')
-            for line in props.last_summary.split("  |  "):
-                box.label(text=line)
+        if not (terrains or walls or volumes):
+            sub = layout.column(align=True)
+            sub.scale_y = 0.85
+            sub.label(text="Collection vacía o sin prefijos.", icon='INFO')
+            sub.label(text="Renombra tus meshes así:")
+            sub.label(text="• Terrain_<lo-que-sea>")
+            sub.label(text="• Wall_<lo-que-sea>")
+            sub.label(text="• Volume_<lo-que-sea>")
+            return
 
-        # Reporte de errores del addon (no confundir con "Comprobar modelo"
-        # del cálculo, que valida la geometría). Esta sección es solo para
-        # cuando Blender ha fallado o se ha cerrado y necesitamos depurar.
-        diag_box = layout.box()
-        diag_box.label(text="Reporte de errores", icon='CONSOLE')
-        diag_box.label(text="(Solo para depurar fallos)", icon='INFO')
-        diag_row = diag_box.row(align=True)
-        diag_row.operator("andamios.diag_export", text="Exportar log", icon='TEXT')
-        diag_row.operator("andamios.diag_clear", text="", icon='TRASH')
+        # Listas plegables por tipo
+        if terrains:
+            layout.separator()
+            layout.label(text=f"Terrain ({len(terrains)})", icon='MESH_GRID')
+            col = layout.column(align=True)
+            col.scale_y = 0.85
+            for o in terrains[:8]:
+                col.label(text=f"  · {o.name}")
+            if len(terrains) > 8:
+                col.label(text=f"  … y {len(terrains) - 8} más")
+        if walls:
+            layout.separator()
+            layout.label(text=f"Wall ({len(walls)})", icon='MESH_PLANE')
+            col = layout.column(align=True)
+            col.scale_y = 0.85
+            for o in walls[:8]:
+                col.label(text=f"  · {o.name}")
+            if len(walls) > 8:
+                col.label(text=f"  … y {len(walls) - 8} más")
+        if volumes:
+            layout.separator()
+            layout.label(text=f"Volume ({len(volumes)})", icon='MESH_CUBE')
+            col = layout.column(align=True)
+            col.scale_y = 0.85
+            for o in volumes[:8]:
+                col.label(text=f"  · {o.name}")
+            if len(volumes) > 8:
+                col.label(text=f"  … y {len(volumes) - 8} más")
+
+
+class ANDAMIOS_PT_diag(_AndamiosSubPanelBase, Panel):
+    """Reporte de errores del addon — sólo para depurar fallos. No
+    confundir con el `Comprobar modelo` del panel de Cálculo, que valida
+    la geometría estructural."""
+    bl_idname = "ANDAMIOS_PT_diag"
+    bl_label = "Reporte de errores"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.label(text="(Solo para depurar fallos)", icon='INFO')
+        row = layout.row(align=True)
+        row.operator("andamios.diag_export", text="Exportar log", icon='TEXT')
+        row.operator("andamios.diag_clear", text="", icon='TRASH')
 
 
 # ---------------------------------------------------------------------------
@@ -3285,6 +4344,10 @@ CLASSES = (
     ANDAMIOS_UL_path,
     ANDAMIOS_UL_ladders,
     ANDAMIOS_PT_panel,
+    ANDAMIOS_PT_decks_catalog,
+    ANDAMIOS_PT_colors,
+    ANDAMIOS_PT_obstacles,
+    ANDAMIOS_PT_diag,
 )
 
 
@@ -3354,6 +4417,7 @@ def _ensure_pynite():
 
 def register():
     _ensure_calc_on_path()
+    _ensure_manufacturer_catalogs()
     _ensure_user_site_packages()
     # i18n primero — para que las clases que se registran a continuación
     # encuentren el dict listo cuando Blender renderice por primera vez.

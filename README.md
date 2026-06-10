@@ -95,8 +95,11 @@ una hoja A3 imprimible.
 
 ### Geometría paramétrica
 - Polilínea con N puntos (rectas, L, U, torre cerrada)
-- Catálogo de longitudes Layher Allround integrado
-  (0,73 / 1,09 / 1,40 / 1,57 / 2,07 / 2,57 / 3,07 m)
+- Catálogos multi-fabricante integrados (`calc/catalogs.py`):
+  **Layher Allround** (0,73–3,07 m), **PERI UP Rosett Flex** (retícula
+  métrica 25 cm), **ULMA BRIO** (brazos 0,35–3,0 m) y **Doka Ringlock S**
+  (0,39–3,07 m) — con presets de profundidad/bandeja por sistema y pesos
+  de catálogo donde el fabricante los publica
 - Plantas multi-altura, husillos regulables, terreno irregular
 - Cruces de arriostramiento con subdivisión zigzag
 - Anclajes a fachada paramétricos
@@ -191,9 +194,11 @@ Resultado esperado: **434 passed**.
   imperfecciones, no acción sísmica.
 - **Voladizos / ménsulas complejas** — geometría parcialmente soportada;
   validar manualmente.
-- **Catálogo Ringlock EU** — sólo Layher Allround integrado. Otros
-  fabricantes (Plettac, Peri) son compatibles geométricamente pero el
-  K_φ y las capacidades de unión deben ajustarse.
+- **Catálogos multi-fabricante** — Layher, PERI UP, ULMA BRIO y Doka
+  Ringlock S integrados a nivel dimensional (longitudes y pesos de
+  catálogo). El K_φ de la unión y las capacidades EN 74 usan valores
+  genéricos Ringlock EU para todos los sistemas — ajustar con la ETA
+  del fabricante para cálculo en producción.
 
 ## Contribuciones
 
